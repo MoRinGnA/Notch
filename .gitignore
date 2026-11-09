@@ -4,3 +4,12 @@ dist-electron
 .env
 .env.*
 !.env.example
+
+# 로컬 실행 로그/임시 파일
+*.log
+*.pid
+.tmp-*
+
+# 네이티브 빌드 산출물
+native/target/
+native/*.node
