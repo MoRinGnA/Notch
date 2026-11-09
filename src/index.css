@@ -26,45 +26,263 @@ body,
   position: relative;
 }
 
-.notch-defs {
-  position: absolute;
-  width: 0;
-  height: 0;
-}
-
 .notch {
   position: relative;
   padding: 0;
   border: none;
-  background: transparent;
+  outline: none;
   cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  background: transparent;
+  border-radius: 0;
   transition:
-    width 0.55s cubic-bezier(0.34, 1.56, 0.64, 1),
-    height 0.55s cubic-bezier(0.34, 1.56, 0.64, 1);
+    width 0.6s cubic-bezier(0.34, 1.56, 0.64, 1),
+    height 0.6s cubic-bezier(0.34, 1.56, 0.64, 1),
+    border-radius 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* 검정 본체: 아래 모서리만 둥글고, 위 모서리는 바깥으로 휘어 상단에 이어짐 */
+.notch-body {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: #000;
+}
+
+/* 위쪽 바깥 모서리 (오목한 필렛) */
+.notch-body::before,
+.notch-body::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: 8px;
+  height: 8px;
+}
+
+.notch-body::before {
+  right: 100%;
+  background: radial-gradient(circle at 0 100%, transparent 7.5px, #000 8px);
+}
+
+.notch-body::after {
+  left: 100%;
+  background: radial-gradient(circle at 100% 100%, transparent 7.5px, #000 8px);
+}
+
+/* 상태 표시 점 */
+.notch-status {
+  position: absolute;
+  left: 16px;
+  top: 50%;
+  z-index: 3;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4ade80;
+  transform: translateY(-50%);
+  pointer-events: none;
+  animation: notch-pulse 2.4s ease-in-out infinite;
+}
+
+/* 생동감 있는 눈 */
+.notch-eyes {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 3;
+  display: flex;
+  gap: 20px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.notch-eye {
+  width: 12px;
+  height: 5px;
+  border-radius: 3px;
+  background: #ffffff;
+  transform-origin: center;
+  animation: notch-blink 4.6s infinite;
+}
+
+@keyframes notch-blink {
+  0%, 94%, 100% { transform: scaleY(1); }
+  96% { transform: scaleY(0.1); }
+}
+
+@keyframes notch-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* 와이어프레임 그리드 (본체 안에만) */
+.notch::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 1;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+  background-size: 18px 18px;
 }
 
 .notch.is-collapsed {
-  width: 190px;
+  width: 154px;
   height: 36px;
+  border-radius: 0 0 16px 16px;
 }
 
 .notch.is-expanded {
   width: 460px;
   height: 180px;
+  border-radius: 0 0 16px 16px;
 }
 
-.notch-body {
-  width: 100%;
-  height: 100%;
-  border-radius: 0 0 28px 28px;
-  background: linear-gradient(180deg, #e8f7ff 0%, #b9d8ff 100%);
-  box-shadow:
-    0 0 0 1px rgba(0, 255, 255, 0.35),
-    0 0 24px rgba(0, 255, 255, 0.25);
-  filter: url(#notch-refract);
-  transition: border-radius 0.55s ease;
+/* 접힌 상태: 격자 없이 검정 본체만 */
+.notch::before {
+  transition: opacity 0.4s;
 }
 
-.notch.is-collapsed .notch-body {
-  border-radius: 0 0 18px 18px;
+.notch.is-collapsed::before {
+  opacity: 0;
 }
+
+/* 펼친 상태: 모서리 크로스 마크 (도면 느낌) */
+.notch::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0;
+  transition: opacity 0.4s;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.6)),
+    linear-gradient(rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.6)),
+    linear-gradient(rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.6)),
+    linear-gradient(rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.6)),
+    linear-gradient(rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.6)),
+    linear-gradient(rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.6)),
+    linear-gradient(rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.6)),
+    linear-gradient(rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.6));
+  background-repeat: no-repeat;
+  background-size:
+    10px 1px, 1px 10px, 10px 1px, 1px 10px,
+    10px 1px, 1px 10px, 10px 1px, 1px 10px;
+  background-position:
+    left 11px top 15px, left 15px top 11px,
+    right 11px top 15px, right 15px top 11px,
+    left 11px bottom 15px, left 15px bottom 11px,
+    right 11px bottom 15px, right 15px bottom 11px;
+}
+
+.notch.is-expanded::after {
+  opacity: 1;
+}
+
+/* 펼친 상태: 도면 주석 (중심축, 치수선, 제목) */
+.notch-axis,
+.notch-title,
+.notch-dim {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.4s;
+  color: rgba(255, 255, 255, 0.5);
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+
+.notch-axis {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  border-left: 1px dashed rgba(255, 255, 255, 0.15);
+}
+
+.notch-title {
+  top: 24px;
+  left: 28px;
+}
+
+/* 사이버코어 HUD 수치 (네온/글로우 없이 모노스페이스 텍스트만) */
+.notch-hud {
+  position: absolute;
+  z-index: 2;
+  top: 42px;
+  left: 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  text-align: left;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.4s;
+  color: rgba(255, 255, 255, 0.7);
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+}
+
+/* 스캔라인 오버레이 */
+.notch-scan {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.4s;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(255, 255, 255, 0.05) 0px,
+    rgba(255, 255, 255, 0.05) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+
+.notch-dim i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  padding: 0 4px;
+  background: #000;
+  font-style: normal;
+  transform: translate(-50%, -50%);
+}
+
+.notch-dim-h {
+  left: 24px;
+  right: 24px;
+  bottom: 14px;
+  height: 7px;
+  border-left: 1px solid rgba(255, 255, 255, 0.35);
+  border-right: 1px solid rgba(255, 255, 255, 0.35);
+  background: linear-gradient(rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.35)) center / 100% 1px no-repeat;
+}
+
+.notch-dim-v {
+  top: 24px;
+  bottom: 24px;
+  right: 14px;
+  width: 7px;
+  border-top: 1px solid rgba(255, 255, 255, 0.35);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.35);
+  background: linear-gradient(rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.35)) center / 1px 100% no-repeat;
+}
+
+.notch.is-expanded .notch-axis,
+.notch.is-expanded .notch-title,
+.notch.is-expanded .notch-dim,
+.notch.is-expanded .notch-hud,
+.notch.is-expanded .notch-scan {
+  opacity: 1;
+}
+
