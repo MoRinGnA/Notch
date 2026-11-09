@@ -15,13 +15,6 @@ interface Lyrics {
 const MEDIA_POLL_MS = 2000;
 const BATTERY_POLL_MS = 30000;
 
-// docs/PLAN.md 기준: 충전 중 파랑, 방전 중 50% 초과 초록, 50% 이하 노랑, 30% 이하 빨강.
-function batteryLevelClass(b: NotchBattery): string {
-  if (b.charging) return "is-charging";
-  if (b.percent <= 30) return "is-critical";
-  if (b.percent <= 50) return "is-low";
-  return "is-high";
-}
 const LYRICS_GAP_MS = 300;
 const LYRICS_CACHE_LIMIT = 50;
 
@@ -42,6 +35,89 @@ const EMPTY_MEDIA: NotchMedia = {
 };
 
 const PROGRESS_TICK_MS = 250;
+
+// 9x9 도트 날씨 아이콘. 1칸 = 1픽셀, 흑백으로만 그린다.
+const WEATHER_DOTS: Record<string, string[]> = {
+  sun: [
+    "....#....",
+    ".#..#..#.",
+    "..#####..",
+    "..#####..",
+    "#########",
+    "..#####..",
+    "..#####..",
+    ".#..#..#.",
+    "....#....",
+  ],
+  cloud: [
+    ".........",
+    ".........",
+    "....###..",
+    "..#####..",
+    ".#######.",
+    ".#######.",
+    "..#####..",
+    ".........",
+    ".........",
+  ],
+  fog: [
+    ".........",
+    ".........",
+    ".#####...",
+    "...#####.",
+    ".#####...",
+    "...#####.",
+    ".#####...",
+    ".........",
+    ".........",
+  ],
+  rain: [
+    "....###..",
+    "..#####..",
+    ".#######.",
+    "..#####..",
+    ".#.#.#...",
+    "..#.#....",
+    ".#.#.....",
+    ".........",
+    ".........",
+  ],
+  snow: [
+    "....###..",
+    "..#####..",
+    ".#######.",
+    "..#####..",
+    ".#.#.#...",
+    "#.#.#.#..",
+    ".#.#.#...",
+    ".........",
+    ".........",
+  ],
+  thunder: [
+    "....###..",
+    "..#####..",
+    ".#######.",
+    "..#####..",
+    "....##...",
+    "...##....",
+    "..##.....",
+    "..#......",
+    ".........",
+  ],
+};
+
+function WeatherIcon({ kind }: { kind: string }) {
+  const rows = WEATHER_DOTS[kind] ?? WEATHER_DOTS.cloud;
+  return (
+    <svg className="notch-hud-pixel" viewBox={`0 0 ${rows.length} ${rows.length}`} aria-hidden="true">
+      {rows.flatMap((row, y) =>
+        [...row].map((cell, x) =>
+          cell === "#" ? <rect key={`${x}-${y}`} x={x} y={y} width={1} height={1} /> : null,
+        ),
+      )}
+    </svg>
+  );
+}
 
 // 초를 m:ss 로 표시한다.
 function clock(seconds: number): string {
@@ -186,6 +262,8 @@ export function Notch({ expanded, onToggle }: NotchProps) {
   const [lyrics, setLyrics] = useState<Lyrics>({ state: "idle", text: "", synced: [] });
   const [now, setNow] = useState(() => Date.now());
   const [battery, setBattery] = useState<NotchBattery | null>(null);
+  // 가사가 없을 때 채울 유튜브 썸네일(data URL). 없으면 빈 문자열.
+  const [ytThumb, setYtThumb] = useState("");
   const mediaRef = useRef(media);
   mediaRef.current = media;
 
@@ -257,6 +335,29 @@ export function Notch({ expanded, onToggle }: NotchProps) {
     };
   }, [expanded, mediaKey]);
 
+  // 가사를 찾지 못한 곡은 유튜브 썸네일을 앨범처럼 띄운다. 실패하면 기존 앨범 아트로 돌아간다.
+  useEffect(() => {
+    if (!expanded || lyrics.state !== "missing" || !media.active) {
+      setYtThumb("");
+      return;
+    }
+    const track = trackName(media.title);
+    const artist = artistName(media.artist);
+    if (!track) return;
+    let cancelled = false;
+    void window.notchApi
+      ?.getYoutubeThumb(track, artist)
+      .then((url) => {
+        if (!cancelled) setYtThumb(url || "");
+      })
+      .catch(() => {
+        if (!cancelled) setYtThumb("");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [expanded, lyrics.state, mediaKey]);
+
   const control = (action: "Play" | "Previous" | "Next") => (e: MouseEvent) => {
     e.stopPropagation();
     if (action === "Play") {
@@ -280,7 +381,110 @@ export function Notch({ expanded, onToggle }: NotchProps) {
 
   const hasMedia = media.active && media.title.length > 0;
   const shownTitle = cleanTitle(media.title);
+
+  // 미디어가 없을 때 펼친 화면은 HUD만 보여준다. 시계와 CPU는 그때만 돈다.
+  const [hudNow, setHudNow] = useState(() => Date.now());
+  const [cpu, setCpu] = useState(0);
+  const [gpu, setGpu] = useState<number | null>(null);
+  const [ping, setPing] = useState(0);
+  const [polls, setPolls] = useState(0);
+  const [weather, setWeather] = useState<{ tempC: number; kind: string; city: string } | null>(null);
+
+  useEffect(() => {
+    if (!expanded || hasMedia) return;
+    const id = window.setInterval(() => setHudNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [expanded, hasMedia]);
+
+  useEffect(() => {
+    if (!expanded || hasMedia || !window.notchApi) return;
+    let cancelled = false;
+    const read = () => {
+      const startedAt = performance.now();
+      void window.notchApi!
+        .getStats()
+        .then((stats) => {
+          if (cancelled) return;
+          setCpu(stats.cpu);
+          setPing(Math.round(performance.now() - startedAt));
+          setPolls((count) => count + 1);
+        })
+        .catch(() => undefined);
+    };
+    void read();
+    const id = window.setInterval(read, 1500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };  }, [expanded, hasMedia]);
+
+  // 데스크탑의 HUD에서만 GPU를 읽고, 이전 조회가 끝난 뒤 다음 조회를 예약한다.
+  useEffect(() => {
+    if (!expanded || hasMedia || !battery || battery.hasBattery || !window.notchApi) return;
+    let cancelled = false;
+    let timer: number | undefined;
+    const read = async () => {
+      try {
+        const value = await window.notchApi!.getGpu();
+        if (!cancelled) setGpu(value);
+      } catch {
+        if (!cancelled) setGpu(null);
+      }
+      if (!cancelled) timer = window.setTimeout(read, 3000);
+    };
+    void read();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [expanded, hasMedia, battery?.hasBattery]);
+
+  // 날씨는 미디어가 없는 HUD에서만, 10분 간격으로 읽는다.
+  useEffect(() => {
+    if (!expanded || hasMedia || !window.notchApi) return;
+    let cancelled = false;
+    const read = () => {
+      void window.notchApi!
+        .getWeather()
+        .then((next) => {
+          if (!cancelled) setWeather(next);
+        })
+        .catch(() => undefined);
+    };
+    void read();
+    const id = window.setInterval(read, 10 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [expanded, hasMedia]);
+
+  // 배터리는 평소에 숨기고, 충전 중이거나 30% 이하일 때만 글자로 알린다.
+  const lowBattery = !!battery?.hasBattery && !battery.charging && battery.percent <= 30;
+  const footerLabel =
+    battery && !battery.hasBattery
+      ? "NOTCH"
+      : battery?.hasBattery && battery.charging
+        ? `CHARGE ${battery.percent}%`
+        : lowBattery
+          ? `LOW ${battery.percent}%`
+          : "NOTCH-01";
+  const collapsedBadge = !expanded && battery?.hasBattery ? (battery.charging ? "bolt" : lowBattery ? "LOW" : "") : "";
   const progress = media.duration > 0 ? Math.min(1, Math.max(0, livePosition / media.duration)) : 0;
+  const hudDate = new Date(hudNow);
+  const pad2 = (value: number) => String(value).padStart(2, "0");
+  // 초는 따로 떼어 어둡게, 숫자는 세 칸 고정폭으로 흔들리지 않게.
+  const hudHm = `${pad2(hudDate.getHours())}:${pad2(hudDate.getMinutes())}`;
+  const hudSec = pad2(hudDate.getSeconds());
+  const hudDay = `${hudDate.getFullYear()}.${pad2(hudDate.getMonth() + 1)}.${pad2(hudDate.getDate())} ${hudDate.toLocaleDateString("en-US", { weekday: "short" }).toUpperCase()}`;
+  const hudCpu = String(Math.round(cpu)).padStart(3, " ");
+  const hudGpu = (gpu === null ? "--" : String(Math.round(gpu))).padStart(3, " ");
+  const hudPing = String(ping).padStart(3, " ");
+  const hudPolls = String(polls).padStart(3, " ");
+  const cpuHot = cpu > 80;
+  // 제목과 같은 앨범은 중복이라 메타 줄에서 뺀다.
+  const metaAlbum =
+    media.album && media.album !== media.title && media.album !== shownTitle ? media.album : "";
   const hasSynced = lyrics.state === "ready" && lyrics.synced.length > 0;
   // 현재 재생 시각에 해당하는 줄의 인덱스(마지막으로 시작한 줄).
   let activeLine = -1;
@@ -298,15 +502,13 @@ export function Notch({ expanded, onToggle }: NotchProps) {
         ? "연주곡입니다."
         : lyrics.state === "loading"
           ? "가사를 불러오는 중..."
-          : lyrics.state === "missing"
-            ? "가사를 찾지 못했습니다."
-            : "";
+          : "";
 
   return (
     <div
       role="button"
       tabIndex={0}
-      className={`notch ${expanded ? "is-expanded" : "is-collapsed"}${hasMedia ? " has-media" : ""}${media.status === "Playing" ? " is-playing" : ""}`}
+      className={`notch ${expanded ? "is-expanded" : "is-collapsed"}${hasMedia ? " has-media" : ""}${media.status === "Playing" ? " is-playing" : ""}${collapsedBadge ? " has-status" : ""}`}
       onClick={onToggle}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") onToggle();
@@ -315,12 +517,6 @@ export function Notch({ expanded, onToggle }: NotchProps) {
       aria-label="Notch"
     >
       <span className="notch-body" />
-      {battery?.hasBattery && (
-        <span
-          className={`notch-battery ${batteryLevelClass(battery)}`}
-          title={`배터리 ${battery.percent}%${battery.charging ? " · 충전 중" : ""}`}
-        />
-      )}
       {!expanded && hasMedia ? (
         <span className="notch-now">
           <span className="notch-now-title">{shownTitle}</span>
@@ -332,24 +528,53 @@ export function Notch({ expanded, onToggle }: NotchProps) {
           <span className="notch-eye" />
         </span>
       ) : null}
-      <span className="notch-title">NOTCH-01</span>
+      <span className="notch-title">{footerLabel}</span>
+      {collapsedBadge === "bolt" ? (
+        <span className="notch-bolt" aria-label="충전 중" />
+      ) : collapsedBadge ? (
+        <span className="notch-status">{collapsedBadge}</span>
+      ) : null}
       <div className="notch-panel">
-
+        {!hasMedia ? (
+          <div className="notch-hud">
+            <span className="notch-hud-top">
+              <span className="notch-hud-clock">
+                {hudHm}
+                <span className="notch-hud-sec">:{hudSec}</span>
+              </span>
+              {weather && (
+                <span className="notch-hud-weather">
+                  {weather.city && <span className="notch-hud-city" title={weather.city}>{weather.city}</span>}
+                  <span className="notch-hud-weather-reading">
+                    <WeatherIcon kind={weather.kind} />
+                    <span className="notch-hud-temp">{weather.tempC}°</span>
+                  </span>
+                </span>
+              )}
+            </span>
+            <span className="notch-hud-date">{hudDay}</span>
+            <span className="notch-hud-strip">
+              <span className={`notch-hud-cpu${cpuHot ? " is-hot" : ""}`}>{`CPU ${hudCpu}%`}</span>
+              {battery && !battery.hasBattery && <span>{`GPU ${hudGpu}%`}</span>}
+              <span className="notch-hud-ping">{`PING ${hudPing}ms`}</span>
+              <span>{`POLL ${hudPolls}`}</span>
+            </span>
+          </div>
+        ) : (
+          <>
         <div className="notch-info">
           <span className="notch-info-row">
-            <span className="notch-hud-key">TRACK</span>
+            <span className="notch-eq" aria-hidden="true">
+              <i />
+              <i />
+              <i />
+            </span>
+            <span className="notch-stop" aria-hidden="true" />
             <span className="notch-info-title">{hasMedia ? shownTitle : "재생 중인 곡 없음"}</span>
           </span>
-          {hasMedia && media.artist && (
-            <span className="notch-info-row">
-              <span className="notch-hud-key">ARTIST</span>
-              <span className="notch-info-artist">{displayArtist(media.artist)}</span>
-            </span>
-          )}
-          {hasMedia && media.album && media.album !== media.title && media.album !== shownTitle && (
-            <span className="notch-info-row">
-              <span className="notch-hud-key">ALBUM</span>
-              <span className="notch-info-album">{media.album}</span>
+          {hasMedia && (displayArtist(media.artist) || metaAlbum) && (
+            <span className="notch-info-meta">
+              {[displayArtist(media.artist), metaAlbum].filter(Boolean).join(" · ")}
             </span>
           )}
         </div>
@@ -357,19 +582,24 @@ export function Notch({ expanded, onToggle }: NotchProps) {
           <span className="notch-time">{hasMedia ? clock(livePosition) : "--:--"}</span>
           <span className="notch-seg" aria-label="재생 진행률">
             <span className="notch-seg-fill" style={{ transform: `scaleX(${progress})` }} />
+            <span className="notch-seg-head" style={{ left: `${progress * 100}%` }} />
           </span>
           <span className="notch-time">{hasMedia ? clock(media.duration) : "--:--"}</span>
         </div>
-        {showArt && media.thumbnail ? (
-          <div className="notch-art">
-            <img className="notch-art-img" src={media.thumbnail} alt="" />
-            <span className="notch-art-note">{lyricsText}</span>
-          </div>
-        ) : hasSynced ? (
+        {hasSynced ? (
           <div className="notch-lyrics notch-lyrics-synced">
             <div key={activeLine} className="notch-line is-active">
               {lyrics.synced[activeLine]?.text || "\u00a0"}
             </div>
+          </div>
+        ) : showArt && ytThumb ? (
+          <div className="notch-art-still">
+            <img className="notch-art-still-img" src={ytThumb} alt="" />
+          </div>
+        ) : showArt && media.thumbnail ? (
+          <div className="notch-art">
+            <img className="notch-art-img" src={media.thumbnail} alt="" />
+            {lyricsText ? <span className="notch-art-note">{lyricsText}</span> : null}
           </div>
         ) : (
           <div className="notch-lyrics">{lyricsText}</div>
@@ -385,6 +615,8 @@ export function Notch({ expanded, onToggle }: NotchProps) {
             NEXT
           </button>
         </div>
+          </>
+        )}
       </div>
       <span className="notch-scan" />
     </div>

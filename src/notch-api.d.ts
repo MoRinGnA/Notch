@@ -27,8 +27,11 @@ interface NotchBattery {
 interface Window {
   notchApi?: {
     getStats: () => Promise<NotchStats>;
+    getGpu: () => Promise<number | null>;
     getBattery: () => Promise<NotchBattery>;
     getMedia: () => Promise<NotchMedia>;
+    getYoutubeThumb: (track: string, artist: string) => Promise<string>;
+    getWeather: () => Promise<{ tempC: number; kind: string; city: string } | null>;
     controlMedia: (action: "Play" | "Previous" | "Next", target?: { app?: string; title?: string }) => Promise<void>;
   };
 }

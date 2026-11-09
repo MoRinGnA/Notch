@@ -37,10 +37,11 @@ body,
   -webkit-tap-highlight-color: transparent;
   background: transparent;
   border-radius: 0;
+  /* 부드러운 스프링 대신 단계적으로 끊어 도는 기계적 전환 */
   transition:
-    width 0.6s cubic-bezier(0.34, 1.56, 0.64, 1),
-    height 0.6s cubic-bezier(0.34, 1.56, 0.64, 1),
-    border-radius 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+    width 0.18s steps(6, end),
+    height 0.18s steps(6, end),
+    border-radius 0.18s steps(6, end);
 }
 
 /* 검정 본체: 아래 모서리만 둥글고, 위 모서리는 바깥으로 휘어 상단에 이어짐 */
@@ -71,32 +72,6 @@ body,
   background: radial-gradient(circle at 100% 100%, transparent 7.5px, #000 8px);
 }
 
-/* 배터리 충전 ON/OFF 상태 점 (노트북 전용) */
-.notch-battery {
-  position: absolute;
-  left: 16px;
-  top: 50%;
-  z-index: 3;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #4ade80;
-  transform: translateY(-50%);
-  pointer-events: none;
-}
-
-.notch-battery.is-charging {
-  background: #38bdf8;
-}
-
-.notch-battery.is-low {
-  background: #facc15;
-}
-
-.notch-battery.is-critical {
-  background: #f87171;
-}
-
 /* 생동감 있는 눈 */
 .notch-eyes {
   position: absolute;
@@ -113,8 +88,9 @@ body,
 .notch-eye {
   width: 10px;
   height: 8px;
-  border-radius: 2px;
   background: #ffffff;
+  /* 둥근 점 대신 비스듬히 깎아낸 각진 눈 */
+  clip-path: polygon(22% 0, 100% 0, 78% 100%, 0 100%);
   transform-origin: center;
   animation: notch-blink 4.6s infinite;
 }
@@ -123,7 +99,6 @@ body,
 .notch.is-expanded .notch-eye {
   width: 14px;
   height: 11px;
-  border-radius: 3px;
 }
 
 @keyframes notch-look {
@@ -173,11 +148,6 @@ body,
   justify-content: center;
   align-items: center;
   max-width: 420px;
-}
-
-/* 접힌 미디어 텍스트와 상태 점이 겹치지 않도록 점을 숨긴다 */
-.notch.is-collapsed.has-media .notch-battery {
-  display: none;
 }
 
 .notch-now {
@@ -233,28 +203,30 @@ body,
   opacity: 0;
   transition: opacity 0.4s;
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.6)),
-    linear-gradient(rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.6)),
-    linear-gradient(rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.6)),
-    linear-gradient(rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.6)),
-    linear-gradient(rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.6)),
-    linear-gradient(rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.6)),
-    linear-gradient(rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.6)),
-    linear-gradient(rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.6));
+    linear-gradient(rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.35)),
+    linear-gradient(rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.35)),
+    linear-gradient(rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.35)),
+    linear-gradient(rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.35)),
+    linear-gradient(rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.35)),
+    linear-gradient(rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.35)),
+    linear-gradient(rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.35)),
+    linear-gradient(rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.35));
   background-repeat: no-repeat;
   background-size:
     10px 1px, 1px 10px, 10px 1px, 1px 10px,
     10px 1px, 1px 10px, 10px 1px, 1px 10px;
+  /* 모서리에서 만나는 L자 브래킷 (반 자른 사각형) */
   background-position:
-    left 11px top 15px, left 15px top 11px,
-    right 11px top 15px, right 15px top 11px,
-    left 11px bottom 15px, left 15px bottom 11px,
-    right 11px bottom 15px, right 15px bottom 11px;
+    left 11px top 11px, left 11px top 11px,
+    right 11px top 11px, right 11px top 11px,
+    left 11px bottom 11px, left 11px bottom 11px,
+    right 11px bottom 11px, right 11px bottom 11px;
 }
 
 .notch.is-expanded::after {
   opacity: 1;
 }
+
 
 /* 펼친 상태: 제목 */
 .notch-title {
@@ -263,7 +235,7 @@ body,
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.4s;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.72);
   font-family: "Consolas", "Courier New", monospace;
   font-size: 10px;
   letter-spacing: 0.08em;
@@ -280,14 +252,46 @@ body,
   bottom: 8px;
 }
 
+/* 접힌 모드: 충전 중이거나 부족할 때만 오른쪽 끝에 CHG/LOW */
+.notch-status {
+  position: absolute;
+  z-index: 4;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: #ffffff;
+}
+
+.notch.is-collapsed.has-status {
+  padding-right: 40px;
+}
+
+/* 충전 중 표시: 폰트 이모지 대신 흰 도형으로 그린 번개 */
+.notch-bolt {
+  position: absolute;
+  z-index: 4;
+  right: 14px;
+  top: 50%;
+  width: 9px;
+  height: 14px;
+  margin-top: -7px;
+  background: #ffffff;
+  clip-path: polygon(58% 0%, 8% 58%, 42% 58%, 32% 100%, 92% 40%, 54% 40%);
+  pointer-events: none;
+}
+
 /* 펼친 패널: 곡 정보, 가사, 재생 버튼 (네온/글로우 없음) */
 .notch-panel {
   position: absolute;
   z-index: 2;
-  left: 24px;
-  right: 24px;
-  top: 16px;
-  bottom: 8px;
+  left: 28px;
+  right: 28px;
+  top: 18px;
+  bottom: 12px;
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -312,20 +316,68 @@ body,
 }
 
 .notch-info-title {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.notch-info-artist,
-.notch-info-album {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.6);
+/* 아티스트 · 앨범을 한 줄로 묶어 라벨 세 줄을 없앤다 */
+.notch-info-meta {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.55);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 재생 중이라는 신호: 글자 대신 움직이는 막대 세 개 */
+.notch-eq {
+  flex: none;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 10px;
+}
+
+.notch-eq i {
+  width: 2px;
+  height: 4px;
+  background: #ffffff;
+  animation: notch-eq 0.9s steps(3, end) infinite;
+}
+
+.notch-eq i:nth-child(2) {
+  animation-delay: -0.3s;
+}
+
+.notch-eq i:nth-child(3) {
+  animation-delay: -0.6s;
+}
+
+/* 재생 중에는 이퀄라이저, 멈춰 있으면 정지 사각형 */
+.notch:not(.is-playing) .notch-eq {
+  display: none;
+}
+
+.notch-stop {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  background: #ffffff;
+  opacity: 0.85;
+}
+
+.notch.is-playing .notch-stop {
+  display: none;
+}
+
+@keyframes notch-eq {
+  0% { height: 4px; }
+  33% { height: 10px; }
+  66% { height: 6px; }
+  100% { height: 4px; }
 }
 
 /* 진행바 행: 왼쪽 경과 시간, 오른쪽 전체 시간 (헤더 상태 표시는 제거) */
@@ -345,18 +397,9 @@ body,
 
 .notch-info-row {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
+  align-items: center;
+  gap: 7px;
   min-width: 0;
-}
-
-.notch-hud-key {
-  flex: none;
-  width: 46px;
-  font-family: "Consolas", "Courier New", monospace;
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  color: rgba(255, 255, 255, 0.55);
 }
 
 /* 곡 진행률 세그먼트 바: 가는 눈금이 재생된 만큼 밝아진다 */
@@ -366,7 +409,7 @@ body,
   height: 2px;
   margin: 0;
   background: rgba(255, 255, 255, 0.14);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .notch-seg-fill {
@@ -374,6 +417,17 @@ body,
   inset: 0;
   background: rgba(255, 255, 255, 0.85);
   transform-origin: left center;
+}
+
+/* 재생 헤드: 채움 끝에 두는 작은 밝은 블록 */
+.notch-seg-head {
+  position: absolute;
+  top: -3px;
+  width: 3px;
+  height: 8px;
+  margin-left: -1px;
+  background: #ffffff;
+  pointer-events: none;
 }
 
 .notch-lyrics {
@@ -421,6 +475,16 @@ body,
   word-break: keep-all;
 }
 
+/* 새 줄이 흰색으로 켜졌다가 회색으로 가라앉는 CRT 잔광 */
+.notch-line.is-active {
+  animation: notch-lyric-afterglow 0.5s steps(5, end) forwards;
+}
+
+@keyframes notch-lyric-afterglow {
+  from { color: #ffffff; }
+  to { color: #b8b8b8; }
+}
+
 /* 가사가 없을 때: 앨범 이미지 */
 .notch-art {
   flex: 1;
@@ -443,6 +507,158 @@ body,
   color: rgba(255, 255, 255, 0.6);
 }
 
+/* 가사가 없을 때: 유튜브 썸네일을 꽉 찬 정지 화면처럼 깔아 빈 공간을 민다 */
+.notch-art-still {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.notch-art-still-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: grayscale(1) contrast(1.06) brightness(0.78);
+}
+
+/* 미디어가 없을 때: 펼친 화면은 HUD(시계·CPU·링크)만 */
+.notch-hud {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 7px;
+}
+
+/* 시계와 날씨를 한 줄에 */
+.notch-hud-top {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.notch-hud-weather {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  min-width: 0;
+  max-width: 110px;
+  gap: 3px;
+  padding-bottom: 5px;
+}
+
+.notch-hud-weather-reading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.notch-hud-city {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 14px;
+  line-height: 1.2;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* 도트 날씨 아이콘: 컬러 이모지 대신 흑백 픽셀 */
+.notch-hud-pixel {
+  width: 20px;
+  height: 20px;
+  fill: #ffffff;
+  opacity: 0.85;
+  shape-rendering: crispEdges;
+}
+
+.notch-hud-temp {
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 20px;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.85);
+  font-variant-numeric: tabular-nums;
+}
+
+.notch-hud-clock {
+  display: block;
+  transform: translateY(-8px);
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 42px;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  color: #ffffff;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 초는 콜론과 함께 한 발 뒤로 (콜론 간격은 시계 내부와 동일하게) */
+.notch-hud-sec {
+  margin-left: 0;
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.notch-hud-date {
+  transform: translateY(-8px);
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+/* 하단 텔레메트리 스트립: CPU·지연·폴링 */
+.notch-hud-strip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 5px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.5);
+  white-space: pre;
+  font-variant-numeric: tabular-nums;
+}
+
+.notch-hud-cpu {
+  flex: none;
+}
+
+/* 80% 초과: 색 대신 흑백 반전으로 경고 */
+.notch-hud-cpu.is-hot {
+  background: #ffffff;
+  color: #000000;
+  padding: 1px 4px;
+}
+
+.notch-hud-ping {
+  margin-left: auto;
+}
+
+
+/* 양 끝을 배경에 녹여 HUD 피드처럼 보이게 한다 */
+.notch-art-still::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    rgba(0, 0, 0, 0.6),
+    rgba(0, 0, 0, 0) 16%,
+    rgba(0, 0, 0, 0) 84%,
+    rgba(0, 0, 0, 0.6)
+  );
+}
+
 .notch-controls {
   display: flex;
   justify-content: center;
@@ -450,24 +666,26 @@ body,
 }
 
 .notch-btn {
-  padding: 3px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  padding: 4px 10px;
+  border: none;
   background: transparent;
   color: #ffffff;
   font-family: "Consolas", "Courier New", monospace;
   font-size: 10px;
   letter-spacing: 0.1em;
   cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
+  transition: background 0.15s;
 }
 
+/* 호버/누름은 색 대신 흑백 반전으로 강조한다 */
 .notch-btn:hover:not(:disabled) {
-  border-color: rgba(255, 255, 255, 0.7);
-  background: rgba(255, 255, 255, 0.08);
+  background: #ffffff;
+  color: #000000;
 }
 
 .notch-btn:active:not(:disabled) {
-  background: rgba(255, 255, 255, 0.16);
+  background: #cfcfcf;
+  color: #000000;
 }
 
 .notch-btn:disabled {

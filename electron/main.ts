@@ -196,6 +196,34 @@ function runPowerShell(script: string): Promise<string> {
   });
 }
 
+// 프로세스별 GPU 엔진 사용률을 합산하고 가장 바쁜 엔진을 표시한다.
+const GPU_SCRIPT = `
+$ErrorActionPreference = 'Stop'
+$engines = @(Get-CimInstance -ClassName Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine)
+if ($engines.Count -eq 0) { 'null'; exit }
+$totals = @{}
+foreach ($engine in $engines) {
+  $name = [string]$engine.Name
+  if ($name -notmatch '^pid_\\d+_(luid_.*)$') { continue }
+  $key = $Matches[1]
+  if (-not $totals.ContainsKey($key)) { $totals[$key] = 0.0 }
+  $totals[$key] += [double]$engine.UtilizationPercentage
+}
+if ($totals.Count -eq 0) { 'null'; exit }
+$highest = ($totals.Values | Measure-Object -Maximum).Maximum
+ConvertTo-Json -InputObject ([Math]::Min(100.0, [Math]::Max(0.0, $highest))) -Compress
+`;
+
+ipcMain.handle("notch:gpu", async (): Promise<number | null> => {
+  if (process.platform !== "win32") return null;
+  try {
+    const value: unknown = JSON.parse(await runPowerShell(GPU_SCRIPT));
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+  } catch {
+    return null;
+  }
+});
+
 interface BatteryInfo {
   hasBattery: boolean;
   percent: number;
@@ -236,6 +264,13 @@ interface MediaSessionRow {
   position: number;
   duration: number;
   updatedAt: number;
+}
+
+// 브라우저(온라인 강의·웹 플레이어)는 미디어 세션으로 취급하지 않는다 — 강의 탭이 음악 화면을 덮어쓰지 않게.
+const BROWSER_TOKENS = ["chrome", "msedge", "whale", "firefox", "brave", "opera", "vivaldi", "chromium", "arc.exe"];
+function isBrowserApp(app: string): boolean {
+  const id = app.toLowerCase();
+  return BROWSER_TOKENS.some((token) => id.includes(token));
 }
 
 // 화면에 띄운 세션. 일시정지해도 이 곡에 고정해 둔다 — 다른 앱으로 튀면 보고 있던 곡을 다시 켤 수 없다.
@@ -280,7 +315,9 @@ ipcMain.handle("notch:media", async (): Promise<MediaInfo> => {
     const out = await runPowerShell(MEDIA_READ_SCRIPT);
     if (!out) return EMPTY_MEDIA;
     const parsed = JSON.parse(out) as MediaSessionRow | MediaSessionRow[];
-    const rows = Array.isArray(parsed) ? parsed : [parsed];
+    const rows = (Array.isArray(parsed) ? parsed : [parsed]).filter(
+      (row) => row && typeof row.app === "string" && !isBrowserApp(row.app),
+    );
     const pick = pickSession(rows);
     lastSnapshots = new Map(rows.map((r) => [r.app, { position: r.position, updatedAt: r.updatedAt }]));
     if (!pick) return EMPTY_MEDIA;
@@ -295,6 +332,130 @@ ipcMain.handle("notch:media", async (): Promise<MediaInfo> => {
   } catch {
     return EMPTY_MEDIA;
   }
+});
+
+// 가사가 없는 곡은 유튜브 검색 결과의 썸네일을 앨범 아트 대신 쓴다.
+const youtubeCache = new Map<string, string>();
+
+// 검색 결과 제목 비교용: 대소문자·공백·기호를 지워 부분 일치로 본다.
+function normalizeSearch(text: string): string {
+  return text
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/\\(.)/g, "$1")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]/gu, "");
+}
+
+async function fetchYoutubeThumb(artist: string, track: string): Promise<string> {
+  const key = `${artist}|${track}`;
+  const hit = youtubeCache.get(key);
+  if (hit !== undefined) return hit;
+  const query = encodeURIComponent([artist, track].filter(Boolean).join(" "));
+  let thumb = "";
+  try {
+    const res = await fetch(`https://www.youtube.com/results?search_query=${query}&hl=ko`, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
+      },
+      signal: AbortSignal.timeout(6000),
+    });
+    if (res.ok) {
+      const html = await res.text();
+      const allIds = [...new Set([...html.matchAll(/"videoId":"([A-Za-z0-9_-]{11})"/g)].map((m) => m[1]))];
+      // 제목을 읽을 수 있으면 곡/아티스트가 들어간 결과만 써서 엉뚱한 썸네일을 막는다.
+      const titled = [...html.matchAll(/"videoId":"([A-Za-z0-9_-]{11})"[\s\S]{0,600}?"title":\{"runs":\[\{"text":"((?:[^"\\]|\\.)*)"/g)].map(
+        (m) => ({ id: m[1], text: normalizeSearch(m[2]) }),
+      );
+      const wantTrack = normalizeSearch(track);
+      const wantArtist = normalizeSearch(artist);
+      const matched = titled
+        .filter((m) => m.text && (m.text.includes(wantTrack) || (wantArtist.length >= 2 && m.text.includes(wantArtist))))
+        .map((m) => m.id);
+      // 제목 파싱 자체가 실패하면(마크업 변경 등) 첫 결과로 폴백한다.
+      const ids = titled.length > 0 ? [...new Set(matched)] : allIds;
+      for (const id of ids.slice(0, 3)) {
+        const img = await fetch(`https://i.ytimg.com/vi/${id}/mqdefault.jpg`, {
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!img.ok) continue;
+        const bytes = Buffer.from(await img.arrayBuffer());
+        if (bytes.length < 1000) continue;
+        thumb = `data:image/jpeg;base64,${bytes.toString("base64")}`;
+        break;
+      }
+    }
+  } catch {
+    thumb = "";
+  }
+  if (youtubeCache.size >= 20) youtubeCache.clear();
+  youtubeCache.set(key, thumb);
+  return thumb;
+}
+
+ipcMain.handle("notch:youtube-thumb", async (_event, query: { track?: string; artist?: string }) => {
+  const track = (query?.track ?? "").trim();
+  if (!track) return "";
+  return fetchYoutubeThumb((query?.artist ?? "").trim(), track);
+});
+
+type WeatherKind = "sun" | "cloud" | "fog" | "rain" | "snow" | "thunder";
+
+interface WeatherNow {
+  tempC: number;
+  kind: WeatherKind;
+  city: string;
+}
+
+// WMO 날씨 코드를 아이콘 종류로 묶는다.
+function weatherKind(code: number): WeatherKind {
+  if (code === 0 || code === 1) return "sun";
+  if (code === 2 || code === 3) return "cloud";
+  if (code === 45 || code === 48) return "fog";
+  if ((code >= 71 && code <= 77) || code === 85 || code === 86) return "snow";
+  if (code >= 95) return "thunder";
+  if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) return "rain";
+  return "cloud";
+}
+
+// 위치는 한 번만 찾고, 날씨는 10분 캐시(실패 시 1분 뒤 재시도).
+let geoPoint: { lat: number; lon: number; city: string } | null = null;
+let weatherCache: { at: number; ttl: number; value: WeatherNow | null } | null = null;
+
+async function fetchWeather(): Promise<WeatherNow | null> {
+  try {
+    if (!geoPoint) {
+      const geoRes = await fetch("https://ipwho.is/", { signal: AbortSignal.timeout(5000) });
+      if (!geoRes.ok) return null;
+      const geo = (await geoRes.json()) as { success?: boolean; latitude?: number; longitude?: number; city?: string };
+      if (!geo.success || typeof geo.latitude !== "number" || typeof geo.longitude !== "number") return null;
+      geoPoint = { lat: geo.latitude, lon: geo.longitude, city: typeof geo.city === "string" ? geo.city.trim() : "" };
+    }
+    const url =
+      "https://api.open-meteo.com/v1/forecast?latitude=" +
+      geoPoint.lat +
+      "&longitude=" +
+      geoPoint.lon +
+      "&current=temperature_2m,weather_code&timezone=auto";
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { current?: { temperature_2m?: number; weather_code?: number } };
+    const temp = data.current?.temperature_2m;
+    const code = data.current?.weather_code;
+    if (typeof temp !== "number" || typeof code !== "number") return null;
+    return { tempC: Math.round(temp), kind: weatherKind(code), city: geoPoint.city };
+  } catch {
+    return null;
+  }
+}
+
+ipcMain.handle("notch:weather", async (): Promise<WeatherNow | null> => {
+  const now = Date.now();
+  if (weatherCache && now - weatherCache.at < weatherCache.ttl) return weatherCache.value;
+  const value = await fetchWeather();
+  weatherCache = { at: now, ttl: value ? 10 * 60 * 1000 : 60 * 1000, value };
+  return value;
 });
 
 interface MediaTarget {
