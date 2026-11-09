@@ -5,9 +5,14 @@ contextBridge.exposeInMainWorld("notchApi", {
   getGpu: () => ipcRenderer.invoke("notch:gpu") as Promise<number | null>,
   getMedia: () => ipcRenderer.invoke("notch:media"),
   getBattery: () => ipcRenderer.invoke("notch:battery") as Promise<{ hasBattery: boolean; percent: number; charging: boolean }>,
+  onPowerChange: (callback: (onBattery: boolean) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, onBattery: boolean) => callback(onBattery);
+    ipcRenderer.on("notch:power-change", listener);
+    return () => ipcRenderer.removeListener("notch:power-change", listener);
+  },
   getYoutubeThumb: (track: string, artist: string) =>
     ipcRenderer.invoke("notch:youtube-thumb", { track, artist }) as Promise<string>,
   getWeather: () => ipcRenderer.invoke("notch:weather") as Promise<{ tempC: number; kind: string; city: string } | null>,
-  controlMedia: (action: "Play" | "Previous" | "Next", target?: { app?: string; title?: string }) =>
-    ipcRenderer.invoke("notch:media-control", { action, ...target }) as Promise<void>,
+  controlMedia: (action: "Play" | "Pause" | "Previous" | "Next", target?: { app?: string; title?: string }) =>
+    ipcRenderer.invoke("notch:media-control", { action, ...target }) as Promise<boolean>,
 });

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen } from "electron";
+import { app, BrowserWindow, ipcMain, nativeImage, powerMonitor, screen } from "electron";
 import { execFile } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
@@ -155,7 +155,7 @@ $sessions = @($mgr.GetSessions())
 $appWant = '__APP__'
 $titleWant = '__TITLE__'
 $cands = @($sessions | Where-Object { $appWant -ne '' -and [string]$_.SourceAppUserModelId -eq $appWant })
-if ($cands.Count -eq 0) { $cands = $sessions }
+if ($cands.Count -eq 0) { Write-Output 'false'; exit 0 }
 $pick = $null
 # 같은 앱의 세션이 여러 개면 화면에 보이던 곡과 정확히 같은 것을 먼저 찾는다.
 if ($titleWant -ne '') {
@@ -165,6 +165,8 @@ if ($titleWant -ne '') {
       if ([string]$p.Title -eq $titleWant) { $pick = $s; break }
     } catch { }
   }
+  # 표시된 제목이 사라졌다면 다른 세션을 대신 제어하지 않는다.
+  if (-not $pick) { Write-Output 'false'; exit 0 }
 }
 if (-not $pick) {
   $playing = @($cands | Where-Object { $_.GetPlaybackInfo().PlaybackStatus -eq 'Playing' })
@@ -175,10 +177,11 @@ if (-not $pick) {
 if (-not $pick -and $cands.Count -gt 0) {
   $pick = $cands | Sort-Object { ([DateTimeOffset]$_.GetTimelineProperties().LastUpdatedTime).ToUnixTimeMilliseconds() } -Descending | Select-Object -First 1
 }
-if (-not $pick) { exit 0 }
+if (-not $pick) { Write-Output 'false'; exit 0 }
 $r = $pick.__ACTION__Async()
 $t = $asTask.MakeGenericMethod([bool]).Invoke($null, @($r))
 $t.Wait(-1) | Out-Null
+Write-Output $t.Result.ToString().ToLowerInvariant()
 `;
 
 function runPowerShell(script: string): Promise<string> {
@@ -234,22 +237,25 @@ const NO_BATTERY: BatteryInfo = { hasBattery: false, percent: 0, charging: false
 
 // 데스크탑에는 Win32_Battery가 없으므로 hasBattery가 false가 된다.
 const BATTERY_SCRIPT = `
-$b = Get-CimInstance -ClassName Win32_Battery -ErrorAction SilentlyContinue | Select-Object -First 1
+$b = Get-CimInstance -ClassName Win32_Battery -ErrorAction Stop | Select-Object -First 1
 if ($null -eq $b) { '{"hasBattery":false,"percent":0,"charging":false}' } else {
-  $charging = ($b.BatteryStatus -eq 2) -or ($b.BatteryStatus -ge 6 -and $b.BatteryStatus -le 9)
-  [pscustomobject]@{ hasBattery = $true; percent = [int]$b.EstimatedChargeRemaining; charging = [bool]$charging } | ConvertTo-Json -Compress
+  [pscustomobject]@{ hasBattery = $true; percent = [int]$b.EstimatedChargeRemaining } | ConvertTo-Json -Compress
 }
 `;
 
 ipcMain.handle("notch:battery", async (): Promise<BatteryInfo> => {
   if (process.platform !== "win32") return NO_BATTERY;
-  try {
-    const out = await runPowerShell(BATTERY_SCRIPT);
-    if (!out) return NO_BATTERY;
-    return { ...NO_BATTERY, ...(JSON.parse(out) as Partial<BatteryInfo>) };
-  } catch {
-    return NO_BATTERY;
+  const out = await runPowerShell(BATTERY_SCRIPT);
+  const battery = JSON.parse(out) as Partial<BatteryInfo>;
+  if (typeof battery.hasBattery !== "boolean" || typeof battery.percent !== "number") {
+    throw new Error("Invalid battery information");
   }
+  return {
+    hasBattery: battery.hasBattery,
+    percent: battery.percent,
+    // 외부 전원 연결 여부를 사용해 완충 또는 충전 제한 상태도 표시한다.
+    charging: battery.hasBattery && !powerMonitor.isOnBatteryPower(),
+  };
 });
 
 interface MediaSessionRow {
@@ -266,22 +272,31 @@ interface MediaSessionRow {
   updatedAt: number;
 }
 
-// 브라우저(온라인 강의·웹 플레이어)는 미디어 세션으로 취급하지 않는다 — 강의 탭이 음악 화면을 덮어쓰지 않게.
-const BROWSER_TOKENS = ["chrome", "msedge", "whale", "firefox", "brave", "opera", "vivaldi", "chromium", "arc.exe"];
-function isBrowserApp(app: string): boolean {
-  const id = app.toLowerCase();
-  return BROWSER_TOKENS.some((token) => id.includes(token));
+// 브라우저는 영상 이미지 대신 앱 아이콘을 썸네일로 내보낼 수 있다.
+function isBrowserApp(appId: string): boolean {
+  return /(?:^|[\\/])(?:chrome|msedge|whale|firefox|brave|opera|vivaldi|chromium|arc)(?:\.exe)?$/i.test(appId);
 }
 
-// 화면에 띄운 세션. 일시정지해도 이 곡에 고정해 둔다 — 다른 앱으로 튀면 보고 있던 곡을 다시 켤 수 없다.
-let lastShownApp = "";
+// 같은 브라우저에 여러 세션이 있어도 표시된 앱과 제목을 함께 기억한다.
+let lastShownSession = "";
+let lastShownMedia: MediaInfo | null = null;
+let mediaReadId = 0;
+const sessionKey = (row: MediaSessionRow) => JSON.stringify([row.app, row.title]);
 let lastSnapshots = new Map<string, { position: number; updatedAt: number }>();
 const thumbCache = new Map<string, string>();
+
+// 曲の切り替え中に別セッションへ移らないよう、以前から存在した同じアプリの別タブも除外する。
+const TRACK_TRANSITION_MS = 8000;
+let trackTransition: { app: string; title: string; excluded: Set<string>; expiresAt: number } | null = null;
+function holdTrackTransition(app: string, title: string) {
+  const excluded = new Set(lastSnapshots.keys());
+  return { app, title, excluded, expiresAt: Date.now() + TRACK_TRANSITION_MS };
+}
 
 // 재생 중이라고 주장해도 타임라인이 멈춰 있으면 실제로는 멈춘 세션이다(브라우저 탭이 흔하다).
 function isFreshPlaying(row: MediaSessionRow): boolean {
   if (row.status !== "Playing") return false;
-  const prev = lastSnapshots.get(row.app);
+  const prev = lastSnapshots.get(sessionKey(row));
   return !prev || prev.position !== row.position || prev.updatedAt !== row.updatedAt;
 }
 
@@ -289,11 +304,11 @@ function pickSession(rows: MediaSessionRow[]): MediaSessionRow | undefined {
   if (rows.length === 0) return undefined;
   const byRecent = [...rows].sort((a, b) => b.updatedAt - a.updatedAt);
   const freshPlaying = byRecent.filter(isFreshPlaying);
-  const preferred = lastShownApp ? rows.find((r) => r.app === lastShownApp) : undefined;
+  const preferred = lastShownSession ? rows.find((r) => sessionKey(r) === lastShownSession) : undefined;
   if (!preferred) return freshPlaying[0] ?? byRecent.find((r) => r.status === "Playing") ?? byRecent[0];
   if (preferred.status === "Playing") return preferred;
-  // 다른 앱에서 새로 재생을 시작했을 때만 넘어간다.
-  return freshPlaying.find((r) => r.app !== preferred.app) ?? preferred;
+  // 같은 브라우저의 다른 탭도 별도의 세션으로 취급한다.
+  return freshPlaying.find((r) => sessionKey(r) !== lastShownSession) ?? preferred;
 }
 
 async function readThumbnail(app: string, title: string): Promise<string> {
@@ -303,7 +318,13 @@ async function readThumbnail(app: string, title: string): Promise<string> {
   const out = await runPowerShell(
     MEDIA_THUMB_SCRIPT.replace("__APP__", psString(app)).replace("__TITLE__", psString(title)),
   );
-  const url = out.startsWith("data:") ? out : "";
+  let url = out.startsWith("data:") ? out : "";
+  if (url && isBrowserApp(app)) {
+    const image = nativeImage.createFromDataURL(url);
+    const { width, height } = image.getSize();
+    // 정사각형은 브라우저 기본 아이콘일 가능성이 높다. 영상 썸네일은 보존한다.
+    if (image.isEmpty() || !width || !height || Math.abs(width - height) / Math.max(width, height) < 0.1) url = "";
+  }
   if (thumbCache.size >= 40) thumbCache.clear();
   thumbCache.set(key, url);
   return url;
@@ -311,24 +332,56 @@ async function readThumbnail(app: string, title: string): Promise<string> {
 
 ipcMain.handle("notch:media", async (): Promise<MediaInfo> => {
   if (process.platform !== "win32") return EMPTY_MEDIA;
+  const readId = ++mediaReadId;
   try {
     const out = await runPowerShell(MEDIA_READ_SCRIPT);
+    if (readId !== mediaReadId) return lastShownMedia ?? EMPTY_MEDIA;
     if (!out) return EMPTY_MEDIA;
     const parsed = JSON.parse(out) as MediaSessionRow | MediaSessionRow[];
     const rows = (Array.isArray(parsed) ? parsed : [parsed]).filter(
-      (row) => row && typeof row.app === "string" && !isBrowserApp(row.app),
+      (row) => row && typeof row.app === "string" && typeof row.title === "string",
     );
-    const pick = pickSession(rows);
-    lastSnapshots = new Map(rows.map((r) => [r.app, { position: r.position, updatedAt: r.updatedAt }]));
-    if (!pick) return EMPTY_MEDIA;
-    lastShownApp = pick.app;
+    const previous = lastShownMedia;
+    const preferred = rows.find((row) => sessionKey(row) === lastShownSession);
+    // 自動で次の曲に進む場合も、曲末で元のセッションが消えた短い間は保留する。
+    if (!trackTransition && previous?.status === "Playing" && previous.duration > 0 &&
+        (!preferred || preferred.status !== "Playing")) {
+      const elapsed = previous.updatedAt > 0 ? Math.max(0, (Date.now() - previous.updatedAt) / 1000) : 0;
+      if (previous.position + elapsed >= previous.duration - 3) {
+        trackTransition = holdTrackTransition(previous.app, previous.title);
+      }
+    }
+    let pick: MediaSessionRow | undefined;
+    const transition = trackTransition;
+    if (transition && Date.now() < transition.expiresAt) {
+      pick = rows.find((row) => row.app === transition.app && row.title && row.title !== transition.title &&
+        row.status === "Playing" && !transition.excluded.has(sessionKey(row)));
+      if (pick) trackTransition = null;
+      else {
+        lastSnapshots = new Map(rows.map((row) => [sessionKey(row), { position: row.position, updatedAt: row.updatedAt }]));
+        if (lastShownMedia?.app === transition.app && lastShownMedia.title === transition.title) return lastShownMedia;
+      }
+    } else if (transition) {
+      trackTransition = null;
+    }
+    pick ??= pickSession(rows);
+    lastSnapshots = new Map(rows.map((r) => [sessionKey(r), { position: r.position, updatedAt: r.updatedAt }]));
+    if (!pick) {
+      lastShownSession = "";
+      lastShownMedia = null;
+      return EMPTY_MEDIA;
+    }
     let thumbnail = "";
     try {
       thumbnail = await readThumbnail(pick.app, pick.title);
     } catch {
       thumbnail = "";
     }
-    return { ...EMPTY_MEDIA, ...pick, active: true, thumbnail };
+    const media = { ...EMPTY_MEDIA, ...pick, active: true, thumbnail };
+    if (readId !== mediaReadId) return lastShownMedia ?? media;
+    lastShownSession = sessionKey(pick);
+    lastShownMedia = media;
+    return media;
   } catch {
     return EMPTY_MEDIA;
   }
@@ -459,7 +512,7 @@ ipcMain.handle("notch:weather", async (): Promise<WeatherNow | null> => {
 });
 
 interface MediaTarget {
-  action: "Play" | "Previous" | "Next";
+  action: "Play" | "Pause" | "Previous" | "Next";
   app?: string;
   title?: string;
 }
@@ -467,17 +520,29 @@ interface MediaTarget {
 // PowerShell 작은따옴표 문자열에 값을 넣기 위한 이스케이프.
 const psString = (value: string | undefined): string => (value ?? "").replace(/'/g, "''");
 
-ipcMain.handle("notch:media-control", async (_event, target: MediaTarget) => {
-  if (process.platform !== "win32") return;
-  const method =
-    target.action === "Play" ? "TryTogglePlayPause" : target.action === "Previous" ? "TrySkipPrevious" : "TrySkipNext";
+ipcMain.handle("notch:media-control", async (_event, target: MediaTarget): Promise<boolean> => {
+  if (process.platform !== "win32") return false;
+  const method = target.action === "Play" ? "TryPlay" : target.action === "Pause" ? "TryPause"
+    : target.action === "Previous" ? "TrySkipPrevious" : "TrySkipNext";
   const script = MEDIA_CONTROL_SCRIPT.replace("__ACTION__", method)
     .replace("__APP__", psString(target.app))
     .replace("__TITLE__", psString(target.title));
+  const transition = (target.action === "Next" || target.action === "Previous") && target.app && target.title
+    ? holdTrackTransition(target.app, target.title)
+    : null;
+  if (transition) {
+    // 버튼을 누르기 전에 시작된 느린 조회가 보류 중인 세션을 덮지 않게 한다.
+    mediaReadId++;
+    trackTransition = transition;
+  }
   try {
-    await runPowerShell(script);
-  } catch {
-    // 제어 실패는 무시한다.
+    const success = (await runPowerShell(script)) === "true";
+    if (!success && trackTransition === transition) trackTransition = null;
+    return success;
+  } catch (error) {
+    if (trackTransition === transition) trackTransition = null;
+    console.warn("미디어 제어 실패:", error);
+    return false;
   }
 });
 
@@ -514,6 +579,15 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  const notifyPowerChange = (onBattery: boolean) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send("notch:power-change", onBattery);
+    }
+  };
+  powerMonitor.on("on-ac", () => notifyPowerChange(false));
+  powerMonitor.on("on-battery", () => notifyPowerChange(true));
+  powerMonitor.on("resume", () => notifyPowerChange(powerMonitor.isOnBatteryPower()));
+
   createWindow();
 
   app.on("activate", () => {
