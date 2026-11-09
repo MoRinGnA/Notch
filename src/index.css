@@ -94,15 +94,25 @@ body,
   gap: 20px;
   transform: translate(-50%, -50%);
   pointer-events: none;
+  animation: notch-look 9s ease-in-out infinite;
 }
 
 .notch-eye {
-  width: 12px;
-  height: 5px;
-  border-radius: 3px;
+  width: 10px;
+  height: 8px;
+  border-radius: 2px;
   background: #ffffff;
   transform-origin: center;
   animation: notch-blink 4.6s infinite;
+}
+
+/* 눈동자가 오른쪽, 가운데, 왼쪽을 천천히 보는 움직임 */
+@keyframes notch-look {
+  0%, 100% { transform: translate(-50%, -50%); }
+  30% { transform: translate(calc(-50% + 4px), -50%); }
+  45% { transform: translate(calc(-50% + 4px), -50%); }
+  70% { transform: translate(calc(-50% - 4px), -50%); }
+  85% { transform: translate(calc(-50% - 4px), -50%); }
 }
 
 @keyframes notch-blink {
