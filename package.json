@@ -6,7 +6,24 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit -p tsconfig.json && vite build && tsc -p electron/tsconfig.json && node -e \"require('fs').copyFileSync('electron/package.json','dist-electron/package.json')\"",
+    "dist:win": "npm run build && electron-builder --win portable --x64 --publish never",
     "start": "electron ."
+  },
+  "build": {
+    "appId": "com.notch.app",
+    "productName": "Notch",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "dist-electron/**"
+    ],
+    "win": {
+      "target": "portable",
+      "artifactName": "Notch.exe",
+      "signAndEditExecutable": false
+    }
   },
   "license": "UNLICENSED",
   "type": "module",
@@ -22,6 +39,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.2.1",
     "electron": "^45.2.3",
+    "electron-builder": "^26.18.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.6"
   }

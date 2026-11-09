@@ -756,7 +756,9 @@ export function Notch({ expanded, onToggle }: NotchProps) {
             <button type="button" className="notch-btn" onClick={(e) => { e.stopPropagation(); clearTimer(); }}>확인</button>
           </div>
         ) : view === "timer" ? (
-          <div className="notch-timer-panel" onClick={(e) => e.stopPropagation()}>
+          <div className="notch-timer-panel" onClick={(e) => {
+            if (!timerActive || (e.target as HTMLElement).closest("button, input, label")) e.stopPropagation();
+          }}>
             {timerActive ? (
               <>
                 <span className="notch-timer-caption">{timer.status === "paused" ? "일시정지" : "타이머 진행 중"}</span>

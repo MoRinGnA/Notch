@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, nativeImage, powerMonitor, screen } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, powerMonitor, screen, Tray } from "electron";
 import { execFile } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
@@ -546,6 +546,31 @@ ipcMain.handle("notch:media-control", async (_event, target: MediaTarget): Promi
   }
 });
 
+// 트레이 객체는 앱이 실행되는 동안 유지해야 아이콘이 사라지지 않는다.
+let tray: Tray | null = null;
+
+function createTray(): void {
+  const size = 32;
+  const pixels = Buffer.alloc(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      // 둥근 검은 바탕 위의 흰 눈 두 개.
+      const inside = x >= 3 && x < 29 && y >= 3 && y < 29 &&
+        !((x < 5 || x >= 27) && (y < 5 || y >= 27));
+      if (!inside) continue;
+      const eye = y >= 13 && y < 19 && ((x >= 8 && x < 13) || (x >= 19 && x < 24));
+      const offset = (y * size + x) * 4;
+      if (eye) pixels.fill(255, offset, offset + 3);
+      pixels[offset + 3] = 255;
+    }
+  }
+  tray = new Tray(nativeImage.createFromBitmap(pixels, { width: size, height: size }));
+  tray.setToolTip("Notch");
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: "Notch 종료", click: () => app.quit() },
+  ]));
+}
+
 function createWindow(): void {
   const { workArea } = screen.getPrimaryDisplay();
 
@@ -588,6 +613,7 @@ app.whenReady().then(() => {
   powerMonitor.on("on-battery", () => notifyPowerChange(true));
   powerMonitor.on("resume", () => notifyPowerChange(powerMonitor.isOnBatteryPower()));
 
+  createTray();
   createWindow();
 
   app.on("activate", () => {

@@ -366,6 +366,11 @@ body,
   justify-content: center;
 }
 
+/* 배터리 표시가 있어도 타이머는 노치 전체의 가운데에 둔다. */
+.notch.is-collapsed.has-status:has(.notch-collapsed-timer) {
+  padding-left: 40px;
+}
+
 .notch-collapsed-timer {
   position: relative;
   z-index: 3;
