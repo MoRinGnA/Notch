@@ -571,6 +571,33 @@ function createTray(): void {
   ]));
 }
 
+// 투명한 창 바깥 부분은 클릭을 뒤쪽 창으로 통과시킨다.
+ipcMain.on("notch:bounds", (event, bounds: { x: number; y: number; width: number; height: number }) => {
+  if (process.platform !== "win32" || !bounds ||
+      ![bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite) ||
+      bounds.width <= 0 || bounds.height <= 0) return;
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win || win.isDestroyed()) return;
+  const [windowWidth, windowHeight] = win.getContentSize();
+  const left = Math.max(0, Math.floor(bounds.x));
+  const top = Math.max(0, Math.floor(bounds.y));
+  const right = Math.min(windowWidth, Math.ceil(bounds.x + bounds.width));
+  const bottom = Math.min(windowHeight, Math.ceil(bounds.y + bounds.height));
+  if (right <= left || bottom <= top) return;
+
+  const radius = Math.min(16, Math.floor((right - left) / 2), bottom - top);
+  const shape = [{ x: left, y: top, width: right - left, height: bottom - top - radius }];
+  // 노치 위쪽의 작은 곡면도 잘리지 않게 포함한다.
+  if (left > 0) shape.push({ x: Math.max(0, left - 8), y: top, width: Math.min(8, left), height: Math.min(8, bottom - top) });
+  if (right < windowWidth) shape.push({ x: right, y: top, width: Math.min(8, windowWidth - right), height: Math.min(8, bottom - top) });
+  for (let row = 0; row < radius; row++) {
+    const dy = row + 0.5;
+    const inset = Math.floor(radius - Math.sqrt(radius * radius - dy * dy));
+    shape.push({ x: left + inset, y: bottom - radius + row, width: right - left - inset * 2, height: 1 });
+  }
+  win.setShape(shape.filter((rect) => rect.width > 0 && rect.height > 0));
+});
+
 function createWindow(): void {
   const { workArea } = screen.getPrimaryDisplay();
 

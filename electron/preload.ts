@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 contextBridge.exposeInMainWorld("notchApi", {
+  setNotchBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
+    ipcRenderer.send("notch:bounds", bounds),
   getStats: () => ipcRenderer.invoke("notch:stats") as Promise<{ cpu: number }>,
   getGpu: () => ipcRenderer.invoke("notch:gpu") as Promise<number | null>,
   getMedia: () => ipcRenderer.invoke("notch:media"),

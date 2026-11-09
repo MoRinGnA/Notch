@@ -26,6 +26,7 @@ interface NotchBattery {
 
 interface Window {
   notchApi?: {
+    setNotchBounds: (bounds: { x: number; y: number; width: number; height: number }) => void;
     getStats: () => Promise<NotchStats>;
     getGpu: () => Promise<number | null>;
     getBattery: () => Promise<NotchBattery>;

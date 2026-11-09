@@ -331,6 +331,20 @@ function ScrollingTitle({ text, className }: { text: string; className: string }
 }
 
 export function Notch({ expanded, onToggle }: NotchProps) {
+  const notchRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const notch = notchRef.current;
+    if (!notch || !window.notchApi) return;
+    const updateBounds = () => {
+      const { x, y, width, height } = notch.getBoundingClientRect();
+      window.notchApi?.setNotchBounds({ x, y, width, height });
+    };
+    const observer = new ResizeObserver(updateBounds);
+    observer.observe(notch);
+    updateBounds();
+    return () => observer.disconnect();
+  }, []);
+
   const [media, setMedia] = useState<NotchMedia>(EMPTY_MEDIA);
   const [lyrics, setLyrics] = useState<Lyrics>({ state: "idle", text: "", synced: [] });
   const [now, setNow] = useState(() => Date.now());
@@ -712,6 +726,7 @@ export function Notch({ expanded, onToggle }: NotchProps) {
 
   return (
     <div
+      ref={notchRef}
       role="button"
       tabIndex={0}
       className={`notch ${expanded ? "is-expanded" : "is-collapsed"}${view === "media" ? " has-media" : ""}${media.status === "Playing" ? " is-playing" : ""}${!expanded && collapsedBadge ? " has-status" : ""}${timerActive && view === "media" ? " has-timer" : ""}`}
