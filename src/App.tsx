@@ -18,6 +18,9 @@ export function App() {
   const insideRef = useRef(false);
   const pinnedRef = useRef(pinned);
   pinnedRef.current = pinned;
+  // settings.json의 값. 아직 못 읽었으면 기본 동작(호버 펼침)을 쓴다.
+  const [settings, setSettings] = useState<NotchSettings | null>(null);
+  const hoverOpen = settings?.hoverOpen ?? true;
 
   const expanded = pinned || hovering;
 
@@ -33,6 +36,31 @@ export function App() {
   };
 
   useEffect(() => clearTimers, []);
+
+  useEffect(() => {
+    let alive = true;
+    void window.notchApi
+      ?.getSettings()
+      .then((next) => {
+        if (alive) setSettings(next);
+      })
+      .catch(() => {});
+    const off = window.notchApi?.onSettings((next) => setSettings(next));
+    return () => {
+      alive = false;
+      off?.();
+    };
+  }, []);
+
+  // 호버 펼침을 끄면 열려 있던 호버 상태도 바로 접는다(고정은 그대로 둔다).
+  useEffect(() => {
+    if (hoverOpen) return;
+    if (openTimer.current) {
+      window.clearTimeout(openTimer.current);
+      openTimer.current = null;
+    }
+    setHovering(false);
+  }, [hoverOpen]);
 
   useEffect(() => {
     return window.notchApi?.onToggle(() => {
@@ -64,6 +92,7 @@ export function App() {
       window.clearTimeout(closeTimer.current);
       closeTimer.current = null;
     }
+    if (!hoverOpen) return;
     if (hoverBlocked.current || hovering) return;
     if (openTimer.current) return;
     openTimer.current = window.setTimeout(() => {

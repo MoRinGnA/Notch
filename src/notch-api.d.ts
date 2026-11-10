@@ -24,9 +24,17 @@ interface NotchBattery {
   charging: boolean;
 }
 
+interface NotchSettings {
+  hoverOpen: boolean;
+  toggleShortcut: string;
+  hideOnFullscreen: boolean;
+}
+
 interface Window {
   notchApi?: {
     setNotchBounds: (bounds: { x: number; y: number; width: number; height: number }) => void;
+    getSettings: () => Promise<NotchSettings>;
+    onSettings: (callback: (settings: NotchSettings) => void) => () => void;
     getStats: () => Promise<NotchStats>;
     getGpu: () => Promise<number | null>;
     getBattery: () => Promise<NotchBattery>;

@@ -7,6 +7,17 @@ contextBridge.exposeInMainWorld("notchApi", {
   getGpu: () => ipcRenderer.invoke("notch:gpu") as Promise<number | null>,
   getMedia: () => ipcRenderer.invoke("notch:media"),
   getBattery: () => ipcRenderer.invoke("notch:battery") as Promise<{ hasBattery: boolean; percent: number; charging: boolean }>,
+  getSettings: () => ipcRenderer.invoke("notch:settings") as Promise<{
+    hoverOpen: boolean;
+    toggleShortcut: string;
+    hideOnFullscreen: boolean;
+  }>,
+  onSettings: (callback: (settings: { hoverOpen: boolean; toggleShortcut: string; hideOnFullscreen: boolean }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, settings: { hoverOpen: boolean; toggleShortcut: string; hideOnFullscreen: boolean }) =>
+      callback(settings);
+    ipcRenderer.on("notch:settings", listener);
+    return () => ipcRenderer.removeListener("notch:settings", listener);
+  },
   onToggle: (callback: () => void) => {
     const listener = () => callback();
     ipcRenderer.on("notch:toggle", listener);

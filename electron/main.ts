@@ -1,5 +1,6 @@
 import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, powerMonitor, screen, Tray } from "electron";
 import { execFile } from "node:child_process";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -567,9 +568,56 @@ function createTray(): void {
   }
   tray = new Tray(nativeImage.createFromBitmap(pixels, { width: size, height: size }));
   tray.setToolTip("Notch");
-  tray.setContextMenu(Menu.buildFromTemplate([
+  updateTrayMenu();
+}
+
+// 트레이 메뉴에서 바꿀 수 있는 단축키 후보. "사용 안 함"으로 끌 수 있다.
+const SHORTCUT_CHOICES = [
+  { label: "Ctrl+Alt+N", accelerator: "CommandOrControl+Alt+N" },
+  { label: "Ctrl+Shift+N", accelerator: "CommandOrControl+Shift+N" },
+  { label: "Ctrl+Alt+Shift+N", accelerator: "CommandOrControl+Alt+Shift+N" },
+];
+
+function buildTrayMenu(): Menu {
+  return Menu.buildFromTemplate([
+    {
+      label: "마우스 올리면 펼치기",
+      type: "checkbox",
+      checked: settings.hoverOpen,
+      click: (item) => saveSettings({ hoverOpen: item.checked }),
+    },
+    {
+      label: "전체화면에서 숨기기",
+      type: "checkbox",
+      checked: settings.hideOnFullscreen,
+      click: (item) => saveSettings({ hideOnFullscreen: item.checked }),
+    },
+    { type: "separator" },
+    {
+      label: "펼침 단축키",
+      submenu: [
+        ...SHORTCUT_CHOICES.map((choice) => ({
+          label: choice.label,
+          type: "radio" as const,
+          checked: settings.toggleShortcut === choice.accelerator,
+          click: () => saveSettings({ toggleShortcut: choice.accelerator }),
+        })),
+        { type: "separator" as const },
+        {
+          label: "사용 안 함",
+          type: "radio" as const,
+          checked: !settings.toggleShortcut,
+          click: () => saveSettings({ toggleShortcut: "" }),
+        },
+      ],
+    },
+    { type: "separator" },
     { label: "Notch 종료", click: () => app.quit() },
-  ]));
+  ]);
+}
+
+function updateTrayMenu(): void {
+  tray?.setContextMenu(buildTrayMenu());
 }
 
 // 투명한 창 바깥 부분은 클릭을 뒤쪽 창으로 통과시킨다.
@@ -601,6 +649,81 @@ ipcMain.on("notch:bounds", (event, bounds: { x: number; y: number; width: number
 
 // 펼침/접힘 전역 단축키 (Ctrl+Alt+N).
 const TOGGLE_ACCELERATOR = "CommandOrControl+Alt+N";
+
+interface NotchSettings {
+  hoverOpen: boolean;
+  toggleShortcut: string;
+  hideOnFullscreen: boolean;
+}
+
+const DEFAULT_SETTINGS: NotchSettings = {
+  hoverOpen: true,
+  toggleShortcut: TOGGLE_ACCELERATOR,
+  hideOnFullscreen: true,
+};
+
+// 설정은 실행 파일과 분리된 사용자 폴더에 두고, 없으면 기본값으로 만든다.
+// 개발 실행과 포장 빌드가 같은 파일을 보도록 앱 이름 대신 고정 폴더를 쓴다.
+// app.getPath는 ready 이후에만 안전하므로 쓸 때마다 구한다.
+const settingsFile = (): string => path.join(app.getPath("appData"), "Notch", "settings.json");
+let settings: NotchSettings = DEFAULT_SETTINGS;
+
+function readSettings(): NotchSettings {
+  if (!fs.existsSync(settingsFile())) {
+    try {
+      fs.mkdirSync(path.dirname(settingsFile()), { recursive: true });
+      fs.writeFileSync(settingsFile(), JSON.stringify(DEFAULT_SETTINGS, null, 2) + "\n", "utf8");
+    } catch (error) {
+      console.warn("설정 파일을 만들지 못했습니다:", error);
+    }
+    return DEFAULT_SETTINGS;
+  }
+  try {
+    const raw = JSON.parse(fs.readFileSync(settingsFile(), "utf8")) as Partial<NotchSettings>;
+    // 값이 깨졌거나 빠진 항목은 기본값으로 채운다.
+    return {
+      hoverOpen: typeof raw.hoverOpen === "boolean" ? raw.hoverOpen : DEFAULT_SETTINGS.hoverOpen,
+      toggleShortcut:
+        typeof raw.toggleShortcut === "string" ? raw.toggleShortcut.trim() : DEFAULT_SETTINGS.toggleShortcut,
+      hideOnFullscreen:
+        typeof raw.hideOnFullscreen === "boolean" ? raw.hideOnFullscreen : DEFAULT_SETTINGS.hideOnFullscreen,
+    };
+  } catch (error) {
+    console.warn("설정 파일을 읽지 못해 기본값을 씁니다:", error);
+    return DEFAULT_SETTINGS;
+  }
+}
+
+// 설정으로 켜고 끄는 동작은 전부 여기서 한 번에 다시 적용한다.
+function applySettings(): void {
+  settings = readSettings();
+  globalShortcut.unregisterAll();
+  if (settings.toggleShortcut) {
+    const registered = globalShortcut.register(settings.toggleShortcut, () => {
+      notchWindow?.webContents.send("notch:toggle");
+    });
+    if (!registered) console.warn("전역 단축키를 등록하지 못했습니다:", settings.toggleShortcut);
+  }
+  syncFullscreenWatcher();
+  updateTrayMenu();
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send("notch:settings", settings);
+  }
+}
+
+ipcMain.handle("notch:settings", () => settings);
+
+// 트레이 메뉴에서 바꾸면 파일에 저장하고 바로 적용한다.
+function saveSettings(patch: Partial<NotchSettings>): void {
+  const next = { ...settings, ...patch };
+  try {
+    fs.mkdirSync(path.dirname(settingsFile()), { recursive: true });
+    fs.writeFileSync(settingsFile(), JSON.stringify(next, null, 2) + "\n", "utf8");
+  } catch (error) {
+    console.warn("설정을 저장하지 못했습니다:", error);
+  }
+  applySettings();
+}
 
 // 앞쪽 창이 화면을 꽉 채운 전체화면인지 판정한다. 바탕화면(Progman/WorkerW)은 제외한다.
 const FULLSCREEN_SCRIPT = `
@@ -641,23 +764,28 @@ let notchWindow: BrowserWindow | null = null;
 let fullscreenTimer: NodeJS.Timeout | null = null;
 
 // 전체화면 앱이 앞에 있으면 노치를 숨기고, 빠지면 조용히 되살린다.
-function watchFullscreen(win: BrowserWindow): void {
-  const check = async () => {
-    if (win.isDestroyed()) return;
-    try {
-      const fullscreen = (await runPowerShell(FULLSCREEN_SCRIPT)).trim() === "true";
-      if (fullscreen && win.isVisible()) win.hide();
-      else if (!fullscreen && !win.isVisible()) win.showInactive();
-    } catch {
-      // 판정에 실패하면 현재 표시 상태를 그대로 둔다.
-    }
-  };
-  fullscreenTimer = setInterval(() => { void check(); }, 3000);
-  win.on("closed", () => {
-    if (fullscreenTimer) clearInterval(fullscreenTimer);
-    fullscreenTimer = null;
-    notchWindow = null;
-  });
+async function checkFullscreen(win: BrowserWindow): Promise<void> {
+  if (win.isDestroyed()) return;
+  try {
+    const fullscreen = (await runPowerShell(FULLSCREEN_SCRIPT)).trim() === "true";
+    if (fullscreen && win.isVisible()) win.hide();
+    else if (!fullscreen && !win.isVisible()) win.showInactive();
+  } catch {
+    // 판정에 실패하면 현재 표시 상태를 그대로 둔다.
+  }
+}
+
+// 설정에서 끄면 감시를 멈추고, 숨어 있던 창은 다시 보여 준다.
+function syncFullscreenWatcher(): void {
+  if (fullscreenTimer) clearInterval(fullscreenTimer);
+  fullscreenTimer = null;
+  const win = notchWindow;
+  if (!win || win.isDestroyed()) return;
+  if (!settings.hideOnFullscreen) {
+    if (!win.isVisible()) win.showInactive();
+    return;
+  }
+  fullscreenTimer = setInterval(() => { void checkFullscreen(win); }, 3000);
 }
 
 function createWindow(): void {
@@ -684,7 +812,12 @@ function createWindow(): void {
 
   win.setAlwaysOnTop(true, "screen-saver");
   notchWindow = win;
-  watchFullscreen(win);
+  win.on("closed", () => {
+    if (fullscreenTimer) clearInterval(fullscreenTimer);
+    fullscreenTimer = null;
+    notchWindow = null;
+  });
+  syncFullscreenWatcher();
 
   const devUrl = process.env.VITE_DEV_SERVER_URL;
   if (devUrl) {
@@ -706,11 +839,11 @@ app.whenReady().then(() => {
 
   createTray();
   createWindow();
+  applySettings();
+  // 설정 파일을 고치면 1초 안에 다시 적용한다.
+  fs.watchFile(settingsFile(), { interval: 1000 }, () => applySettings());
 
-  const registered = globalShortcut.register(TOGGLE_ACCELERATOR, () => {
-    notchWindow?.webContents.send("notch:toggle");
-  });
-  if (!registered) console.warn("전역 단축키를 등록하지 못했습니다:", TOGGLE_ACCELERATOR);
+
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
