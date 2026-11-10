@@ -24,6 +24,8 @@ interface Lyrics {
 
 const MEDIA_POLL_MS = 2000;
 const BATTERY_POLL_MS = 30000;
+// 펼친 화면의 기본 폭(내비게이션 + 작업 영역).
+const EXPANDED_WIDTH = 600;
 
 const LYRICS_GAP_MS = 300;
 const LYRICS_CACHE_LIMIT = 50;
@@ -59,15 +61,31 @@ type TimerState =
   | { status: "paused"; mode: TimerMode; phase: PomodoroPhase; round: number; remainingMs: number }
   | { status: "done"; mode: TimerMode; phase: PomodoroPhase; round: number };
 
-type NotchView = "done" | "media" | "timer" | "hud";
+type NotchView = "done" | "media" | "timer" | "hud" | "notes";
+// 펼친 화면 왼쪽 내비게이션에서 고르는 영역.
+type NotchNav = "now" | "timer" | "notes";
 
-// 완료 알림은 최우선, 재생 중 미디어 다음으로 타이머를 보여준다.
-function resolveView(timer: TimerState, hasMedia: boolean, playing: boolean, editingTimer: boolean, inspectingMedia: boolean): NotchView {
+// 완료 알림은 항상 우선하고, 그 아래는 사용자가 고른 영역을 따른다.
+function resolveView(timer: TimerState, hasMedia: boolean, playing: boolean, nav: NotchNav): NotchView {
   if (timer.status === "done") return "done";
-  if (editingTimer) return "timer";
-  if (hasMedia && (playing || inspectingMedia)) return "media";
+  if (nav === "notes") return "notes";
+  if (nav === "timer") return "timer";
+  if (hasMedia && playing) return "media";
   if (timer.status !== "idle") return "timer";
   return hasMedia ? "media" : "hud";
+}
+
+// 메모 목록의 시각 표시. 오늘은 시:분, 지난 메모는 월.일.
+function noteStamp(ms: number): string {
+  const date = new Date(ms);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const today = new Date().toDateString() === date.toDateString();
+  return today ? `${pad(date.getHours())}:${pad(date.getMinutes())}` : `${pad(date.getMonth() + 1)}.${pad(date.getDate())}`;
+}
+
+function notePreview(text: string): string {
+  const line = text.split("\n").find((row) => row.trim()) ?? "";
+  return line.trim().slice(0, 42) || "빈 메모";
 }
 
 // 스톱워치는 지난 시간, 나머지는 남은 시간.
@@ -210,7 +228,23 @@ function trackName(title: string): string {
   const quoted = cleaned.match(/^(.*?)["'‘’“”]([^"'‘’“”]+?)["'‘’“”](?:\s|$)/);
   if (quoted && quoted[2].trim()) return quoted[2].trim();
   const match = cleaned.match(/^.+?\s:\s(.+)$/);
-  return match ? match[1].trim() : cleaned;
+  if (match) return match[1].trim();
+  // "아티스트 - 곡명" 형식. 뒤가 Live·Remix 같은 꼬리표면 곡명이 아니므로 두고,
+  // "Drowning - Live"처럼 뒤가 수식어인 경우는 원래 제목을 그대로 쓴다.
+  const dashed = cleaned.match(/^(.+?)\s+[-\u2013\u2014]\s+(.+)$/);
+  if (dashed) {
+    const tail = dashed[2].trim();
+    const qualifier = /^(live|remix|inst|instrumental|version|edit|acoustic|cover|mv|m\/v|official|lyrics|가사|audio|feat\.?)\b/i.test(tail);
+    if (!qualifier && tail.length >= 2) return tail;
+  }
+  return cleaned;
+}
+
+// 제목 앞의 "aespa 에스파 'Supernova' MV" 같은 구간은 아티스트다(채널명이 레이블일 때 대신 쓴다).
+function titleArtist(title: string): string {
+  const quoted = title.match(/^(.*?)["'‘’“”][^"'‘’“”]+["'‘’“”]/);
+  if (!quoted) return "";
+  return quoted[1].replace(/[\s\-–—:]+$/, "").trim();
 }
 
 // YouTube 업로더(레이블·방송 채널)는 가수가 아니므로 아티스트로 쓰지 않는다.
@@ -245,14 +279,24 @@ function matchScore(
     const a = norm(artist);
     const ga = norm(hit.artistName ?? "");
     if (a && ga && (a === ga || ga.includes(a) || a.includes(ga))) return titleScore * 0.6 + 0.4;
+    // 아티스트가 다르면 제목이 완전히 같고 재생 길이까지 맞을 때만 받아들인다.
+    if (want !== got) return 0;
+    if (mediaDuration > 0 && hit.duration && hit.duration > 0) {
+      const diff = Math.abs(hit.duration - mediaDuration);
+      if (diff > 40) return 0;
+      return diff <= 5 ? 0.85 : 0.72;
+    }
+    return 0;
   }
-  if (want !== got) return 0;
+  // 아티스트를 모를 때는 제목과 재생 길이로만 판단한다.
   if (mediaDuration > 0 && hit.duration && hit.duration > 0) {
     const diff = Math.abs(hit.duration - mediaDuration);
     if (diff > 40) return 0;
-    return diff <= 5 ? 0.85 : 0.72;
+    if (want === got) return diff <= 5 ? 0.85 : 0.72;
+    // "밤편지"처럼 제목이 다른 언어와 섞여 있어도 길이가 거의 같으면 받아들인다.
+    return diff <= 5 ? 0.7 : 0;
   }
-  return 0.65;
+  return want === got ? 0.65 : 0;
 }
 
 function stripTimestamps(synced: string): string {
@@ -270,54 +314,101 @@ function parseSynced(synced: string): { time: number; text: string }[] {
   return rows;
 }
 
+type LrcHit = {
+  plainLyrics?: string | null;
+  syncedLyrics?: string | null;
+  instrumental?: boolean;
+  trackName?: string;
+  artistName?: string;
+  duration?: number;
+};
+
+// 같은 곡이 원문(한글)과 로마자 표기로 따로 올라와 있으면 원문을 고른다.
+const HANGUL = /[\u3131-\u318e\uac00-\ud7a3]/;
+function lyricScript(hit: LrcHit): number {
+  return HANGUL.test(hit.syncedLyrics || hit.plainLyrics || "") ? 1 : 0;
+}
+
+type Candidate = { score: number; hit: LrcHit; order: number };
+
+// 점수가 같으면 한글 가사 > 줄별 시각이 있는 가사 > 재생 길이에 가까운 가사 순으로 고른다.
+function betterHit(next: Candidate, current: Candidate, mediaDuration: number): boolean {
+  if (next.score !== current.score) return next.score > current.score;
+  const script = lyricScript(next.hit) - lyricScript(current.hit);
+  if (script !== 0) return script > 0;
+  const synced = Number(!!next.hit.syncedLyrics) - Number(!!current.hit.syncedLyrics);
+  if (synced !== 0) return synced > 0;
+  const gap = (hit: LrcHit) =>
+    mediaDuration > 0 && hit.duration ? Math.abs(hit.duration - mediaDuration) : Number.POSITIVE_INFINITY;
+  const nextGap = gap(next.hit);
+  const currentGap = gap(current.hit);
+  if (nextGap !== currentGap) return nextGap < currentGap;
+  return next.order < current.order;
+}
+
 const lyricsCache = new Map<string, Lyrics>();
 let lastLyricsAt = 0;
 
 async function fetchLyrics(media: NotchMedia): Promise<Lyrics> {
   const track = trackName(media.title);
-  const artist = artistName(media.artist);
+  // 채널명이 레이블이라 아티스트를 못 얻으면 제목 앞부분에서 가져온다.
+  const artist = artistName(media.artist) || titleArtist(media.title);
   const key = `${track}|${artist}|${media.album}`;
   const cached = lyricsCache.get(key);
   if (cached) return cached;
 
-  const wait = lastLyricsAt + LYRICS_GAP_MS - Date.now();
-  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-  lastLyricsAt = Date.now();
+  // LRCLIB에 연속으로 묻지 않도록 간격을 둔다.
+  const throttle = async () => {
+    const wait = lastLyricsAt + LYRICS_GAP_MS - Date.now();
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    lastLyricsAt = Date.now();
+  };
+  await throttle();
 
-  const params = new URLSearchParams({ track_name: track, artist_name: artist });
-  if (media.album) params.set("album_name", media.album);
-  type LrcData = { plainLyrics?: string | null; syncedLyrics?: string | null; instrumental?: boolean };
   const headers = { "Lrclib-Client": "Notch/0.1" };
-  const toResult = (data: LrcData): Lyrics => {
+  const toResult = (data: LrcHit): Lyrics => {
     if (data.instrumental) return { state: "instrumental", text: "", synced: [] };
     const text = data.plainLyrics?.trim() || (data.syncedLyrics ? stripTimestamps(data.syncedLyrics) : "");
     const synced = data.syncedLyrics ? parseSynced(data.syncedLyrics) : [];
     return text ? { state: "ready", text, synced } : { state: "missing", text: "", synced: [] };
   };
+
+  // 후보 비교는 콜백에서 갱신하므로 객체에 담아 둔다.
+  const selection: { best: Candidate | null; exact: LrcHit | null } = { best: null, exact: null };
+  const consider = (hit: LrcHit, order: number) => {
+    if (hit.instrumental) return;
+    if (!hit.plainLyrics?.trim() && !hit.syncedLyrics) return;
+    const score = matchScore(hit, track, artist, media.duration);
+    if (score < 0.6) return;
+    const candidate: Candidate = { score, hit, order };
+    const current = selection.best;
+    if (!current || betterHit(candidate, current, media.duration)) selection.best = candidate;
+  };
+
   let result: Lyrics = { state: "missing", text: "", synced: [] };
   try {
     // 1차: 정확한 제목·아티스트 조회
+    const params = new URLSearchParams({ track_name: track, artist_name: artist });
+    if (media.album) params.set("album_name", media.album);
     const res = await fetch(`https://lrclib.net/api/get?${params.toString()}`, { headers });
-    if (res.ok) result = toResult((await res.json()) as LrcData);
-    // 2차: 실패 시 검색 API로 다시 찾기
-    if (result.state === "missing") {
-      // 검색 결과는 점수가 가장 높은 후보를 쓴다. 기준(0.6) 미만이거나 가사가 없으면 버린다.
-      const queries = [...new Set([`${artist} ${track}`.trim(), track].filter((q) => q.length >= 2))];
-      let best: { score: number; data: LrcData } | null = null;
-      for (const q of queries) {
-        if (best && best.score >= 0.999) break;
-        const res2 = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(q)}`, { headers });
-        if (!res2.ok) continue;
-        const list = (await res2.json()) as (LrcData & { trackName?: string; artistName?: string; duration?: number })[];
-        for (const hit of list) {
-          if (hit.instrumental) continue;
-          if (!hit.plainLyrics?.trim() && !hit.syncedLyrics) continue;
-          const score = matchScore(hit, track, artist, media.duration);
-          if (score >= 0.6 && (!best || score > best.score)) best = { score, data: hit };
-        }
-      }
-      if (best) result = toResult(best.data);
+    if (res.ok) {
+      const data = (await res.json()) as LrcHit;
+      selection.exact = data;
+      consider(data, 0);
     }
+    // 2차: 같은 곡의 다른 판본까지 훑어 한글 원문이 있으면 그쪽을 쓴다.
+    const queries = [...new Set([`${artist} ${track}`.trim(), track].filter((q) => q.length >= 2))];
+    for (const [index, q] of queries.entries()) {
+      // 이미 한글 가사가 잡혔으면 더 찾지 않는다.
+      if (selection.best && lyricScript(selection.best.hit)) break;
+      await throttle();
+      const res2 = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(q)}`, { headers });
+      if (!res2.ok) continue;
+      const list = (await res2.json()) as LrcHit[];
+      for (const hit of list) consider(hit, index + 1);
+    }
+    const picked = selection.best?.hit ?? selection.exact;
+    if (picked) result = toResult(picked);
   } catch {
     result = { state: "missing", text: "", synced: [] };
   }
@@ -475,15 +566,37 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
   const [timerNow, setTimerNow] = useState(() => Date.now());
   const [timerMinutes, setTimerMinutes] = useState("25");
   const [timerMode, setTimerMode] = useState<TimerMode>("timer");
-  const [editingTimer, setEditingTimer] = useState(false);
-  const [inspectingMedia, setInspectingMedia] = useState(false);
+  // 펼친 화면의 현재 영역. 접힘/펼침과 무관하게 유지되지만, 접으면 NOW로 돌아간다.
+  const [nav, setNav] = useState<NotchNav>("now");
+  // 메모: 고정은 한 건만, 목록은 최근 수정 순서.
+  const [notes, setNotes] = useState<NotchNote[]>([]);
+  const [pinnedNoteId, setPinnedNoteId] = useState<string | null>(null);
+  const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [noteStatus, setNoteStatus] = useState<"idle" | "editing" | "saved">("idle");
+  // 삭제는 한 번 더 확인해야 실행된다(실수로 지우는 것을 막는다).
+  const [deleteArmed, setDeleteArmed] = useState(false);
+  const noteSavedRef = useRef("");
+  const noteDraftRef = useRef("");
+  const activeNoteRef = useRef<string | null>(null);
+  // 편집기를 바꿀 때마다 올린다. 늦게 끝난 저장이 다른 메모 화면을 덮지 않게 하는 표식.
+  const noteSessionRef = useRef(0);
+  noteDraftRef.current = noteDraft;
+  activeNoteRef.current = activeNoteId;
   // 가사가 없을 때 채울 유튜브 썸네일(data URL). 없으면 빈 문자열.
   const [ytThumb, setYtThumb] = useState("");
   const mediaRef = useRef(media);
+  // 이벤트 리스너가 처음 렌더링의 값을 붙들지 않도록 최신 화면 상태를 따로 둔다.
+  const expandedRef = useRef(expanded);
+  const navRef = useRef(nav);
   const mediaRequestRef = useRef(0);
+  // 트레이에서 새 메모를 열었는지: 목록에서 다른 메모를 골라 덮지 않게 한다.
+  const pendingNewNoteRef = useRef(false);
   const pendingPlayRef = useRef<PendingPlay | null>(null);
   const [playPending, setPlayPending] = useState(false);
   mediaRef.current = media;
+  expandedRef.current = expanded;
+  navRef.current = nav;
 
   // 명령 전에 시작된 조회와 늦게 도착한 응답이 새 상태를 덮지 않도록 한다.
   const readMedia = async () => {
@@ -537,6 +650,162 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
     };
   }, []);
 
+  const loadNotes = async (): Promise<NotchNotesData | null> => {
+    if (!window.notchApi) return null;
+    try {
+      const data = await window.notchApi.getNotes();
+      setNotes(data.notes);
+      setPinnedNoteId(data.pinnedId);
+      return data;
+    } catch (error) {
+      console.warn("메모 조회 실패:", error);
+      return null;
+    }
+  };
+
+  // 지금 편집 중인 내용을 저장한다. 빈 새 메모는 만들지 않는다.
+  // 저장이 끝나기 전에 다른 메모로 옮기거나 새 메모를 열 수 있으므로,
+  // 돌아온 결과는 그때도 같은 편집기를 보고 있을 때만 화면에 반영한다.
+  const flushNote = async () => {
+    const api = window.notchApi;
+    if (!api) return;
+    const session = noteSessionRef.current;
+    const text = noteDraftRef.current;
+    const id = activeNoteRef.current;
+    if (text === noteSavedRef.current) return;
+    if (!id && !text.trim()) return;
+    try {
+      const saved = await api.saveNote({ id, text });
+      if (session === noteSessionRef.current) {
+        noteSavedRef.current = text;
+        if (saved) {
+          if (!id) {
+            activeNoteRef.current = saved.id;
+            setActiveNoteId(saved.id);
+          }
+          if (noteDraftRef.current === text) setNoteStatus("saved");
+        }
+      }
+      const data = await api.getNotes();
+      setNotes(data.notes);
+      setPinnedNoteId(data.pinnedId);
+    } catch (error) {
+      console.warn("메모 저장 실패:", error);
+    }
+  };
+
+  // 삭제 확인 상태는 3초 뒤 스스로 풀린다.
+  useEffect(() => {
+    if (!deleteArmed) return;
+    const id = window.setTimeout(() => setDeleteArmed(false), 3000);
+    return () => window.clearTimeout(id);
+  }, [deleteArmed]);
+
+  // 입력이 잠깐 멈추면 자동 저장한다.
+  useEffect(() => {
+    if (nav !== "notes" || noteDraft === noteSavedRef.current) return;
+    const id = window.setTimeout(() => { void flushNote(); }, 600);
+    return () => window.clearTimeout(id);
+  }, [noteDraft, nav]);
+
+  // 메모 화면을 벗어나는 순간 남은 입력을 저장한다.
+  const previousNavRef = useRef<NotchNav>("now");
+  useEffect(() => {
+    if (previousNavRef.current === "notes" && nav !== "notes") void flushNote();
+    previousNavRef.current = nav;
+  }, [nav]);
+
+  const openNote = (note: NotchNote) => {
+    void flushNote();
+    noteSessionRef.current++;
+    setDeleteArmed(false);
+    activeNoteRef.current = note.id;
+    noteDraftRef.current = note.text;
+    noteSavedRef.current = note.text;
+    setActiveNoteId(note.id);
+    setNoteDraft(note.text);
+    setNoteStatus("idle");
+  };
+
+  // 새 메모는 빈 편집기로 시작하고, 기존 내용은 먼저 저장한다.
+  const startNewNote = () => {
+    void flushNote();
+    noteSessionRef.current++;
+    setDeleteArmed(false);
+    // 메모 화면에 새로 들어올 때만 목록 선택을 건너뛰면 된다.
+    pendingNewNoteRef.current = !(expandedRef.current && navRef.current === "notes");
+    activeNoteRef.current = null;
+    noteDraftRef.current = "";
+    noteSavedRef.current = "";
+    setActiveNoteId(null);
+    setNoteDraft("");
+    setNoteStatus("idle");
+  };
+
+  // 메모 화면에 들어오면 목록을 읽고, 이어 쓸 메모(고정 → 최근)를 고른다.
+  useEffect(() => {
+    if (!expanded || nav !== "notes") return;
+    let cancelled = false;
+    void (async () => {
+      const data = await loadNotes();
+      if (!data || cancelled) return;
+      if (pendingNewNoteRef.current) {
+        pendingNewNoteRef.current = false;
+        return;
+      }
+      if (activeNoteRef.current && data.notes.some((note) => note.id === activeNoteRef.current)) return;
+      const target = data.notes.find((note) => note.id === data.pinnedId) ?? data.notes[0];
+      if (target) {
+        activeNoteRef.current = target.id;
+        noteDraftRef.current = target.text;
+        noteSavedRef.current = target.text;
+        setActiveNoteId(target.id);
+        setNoteDraft(target.text);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [expanded, nav]);
+
+  // 트레이의 `새 메모`는 노치를 펼치고 빈 메모 화면을 연다.
+  useEffect(() => {
+    return window.notchApi?.onNewNote(() => {
+      setNav("notes");
+      startNewNote();
+    });
+  }, []);
+
+  const togglePinNote = () => {
+    const api = window.notchApi;
+    const id = activeNoteRef.current;
+    if (!api || !id) return;
+    void api.pinNote(pinnedNoteId === id ? null : id).then((data) => {
+      setNotes(data.notes);
+      setPinnedNoteId(data.pinnedId);
+    }).catch((error: unknown) => console.warn("메모 고정 실패:", error));
+  };
+
+  const deleteActiveNote = () => {
+    const api = window.notchApi;
+    const id = activeNoteRef.current;
+    if (!api || !id) {
+      startNewNote();
+      return;
+    }
+    noteSessionRef.current++;
+    setDeleteArmed(false);
+    void api.deleteNote(id).then((data) => {
+      setNotes(data.notes);
+      setPinnedNoteId(data.pinnedId);
+      const next = data.notes[0];
+      activeNoteRef.current = next?.id ?? null;
+      noteDraftRef.current = next?.text ?? "";
+      noteSavedRef.current = next?.text ?? "";
+      setActiveNoteId(next?.id ?? null);
+      setNoteDraft(next?.text ?? "");
+      setNoteStatus("idle");
+    }).catch((error: unknown) => console.warn("메모 삭제 실패:", error));
+  };
+
   // 전원 전환은 즉시 반영하고, 잔량은 이벤트 직후와 주기적으로 다시 읽는다.
   useEffect(() => {
     if (!window.notchApi) return;
@@ -582,7 +851,6 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
           ? { status: "done", mode: timer.mode, phase: timer.phase, round: timer.round }
           : previous,
       );
-      setEditingTimer(false);
     };
     tick();
     const id = window.setInterval(tick, 250);
@@ -603,8 +871,7 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
       if (!Number.isInteger(minutes) || minutes < 1 || minutes > 1440) return;
       setTimer({ status: "running", mode: "timer", phase: "focus", round: 1, endsAt: current + minutes * 60000 });
     }
-    setEditingTimer(false);
-    setInspectingMedia(false);
+    setNav("timer");
   };
 
   // 포모도로는 완료 알림에서 다음 단계(휴식↔집중)를 직접 시작한다.
@@ -618,7 +885,7 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
       round,
       endsAt: current + (phase === "focus" ? POMODORO_FOCUS_MS : POMODORO_BREAK_MS),
     });
-    setEditingTimer(false);
+    setNav("timer");
   };
 
   const pauseTimer = () => {
@@ -647,8 +914,7 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
 
   const clearTimer = () => {
     setTimer({ status: "idle" });
-    setEditingTimer(false);
-    setInspectingMedia(false);
+    setNav("now");
   };
 
   // 재생 중에는 마지막 폴링 시점부터 경과 시간을 더해 진행률을 부드럽게 올린다.
@@ -768,7 +1034,7 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
       cancelled = true;
     };
   }, [mediaAccentSource]);
-  const view = resolveView(timer, hasMedia, media.status === "Playing", expanded && editingTimer, expanded && inspectingMedia);
+  const view = resolveView(timer, hasMedia, media.status === "Playing", nav);
   const timerActive = timer.status === "running" || timer.status === "paused";
   const timerLabel = timerClock(timerSpan(timer, timerNow));
   const timerChip = timerChipLabel(timer, timerLabel);
@@ -781,14 +1047,10 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
           ? "Elapsed time"
           : "Timer running";
 
+  // 접으면 NOW로 돌아간다(타이머가 살아 있으면 view가 다시 타이머를 고른다).
   useEffect(() => {
-    if (!expanded) {
-      setEditingTimer(false);
-      setInspectingMedia(false);
-    } else if (media.status === "Playing") {
-      setInspectingMedia(false);
-    }
-  }, [expanded, media.status]);
+    if (!expanded) setNav("now");
+  }, [expanded]);
 
   // 미디어가 없을 때 펼친 화면은 HUD만 보여준다. 시계와 CPU는 그때만 돈다.
   const [hudNow, setHudNow] = useState(() => Date.now());
@@ -883,6 +1145,8 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
     expanded && view === "media" && !(battery?.hasBattery && (battery.charging || lowBattery))
       ? ""
       : footerLabel;
+  // 펼친 내비게이션 위쪽에 같은 문구가 있으므로, 아래에는 충전·부족 알림만 남긴다.
+  const navFooter = battery?.hasBattery && (battery.charging || lowBattery) ? footerLabel : "";
   const progress = media.duration > 0 ? Math.min(1, Math.max(0, livePosition / media.duration)) : 0;
   const hudDate = new Date(hudNow);
   const pad2 = (value: number) => String(value).padStart(2, "0");
@@ -976,7 +1240,8 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
     let cancelled = false;
     const update = () => {
       if (cancelled) return;
-      setExpandedWidth(Math.min(860, Math.max(430, Math.ceil(measure.offsetWidth + 68))));
+      // 내비게이션과 좌우 여백을 포함한 폭. 가사가 길면 여기서 늘어난다.
+      setExpandedWidth(Math.min(860, Math.max(EXPANDED_WIDTH, Math.ceil(measure.offsetWidth + 200))));
     };
     update();
     void document.fonts.ready.then(update);
@@ -988,10 +1253,16 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
   // 미디어 가사 외의 화면(타이머/HUD)에서는 긴 가사 폭을 물려받지 않고 기본 폭으로 돌아온다.
   const notchWidth = expanded
     ? view === "media" && hasSynced && widestLyric
-      ? expandedWidth ?? 430
-      : 430
+      ? expandedWidth ?? EXPANDED_WIDTH
+      : EXPANDED_WIDTH
     : collapsedWidth;
 
+  // 내비게이션에서 지금 영역을 표시한다(완료 화면은 타이머로 본다).
+  const navActive: NotchNav = view === "notes" ? "notes" : view === "timer" || view === "done" ? "timer" : "now";
+  // 고정한 메모는 목록 맨 위에 두어 항상 바로 보이게 한다.
+  const orderedNotes = pinnedNoteId
+    ? [...notes].sort((a, b) => Number(b.id === pinnedNoteId) - Number(a.id === pinnedNoteId))
+    : notes;
   const showArt = lyrics.state === "missing" || lyrics.state === "instrumental" || lyrics.state === "idle";
   const lyricsText =
     lyrics.state === "ready"
@@ -1070,8 +1341,97 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
       ) : collapsedBadge ? (
         <span className={`notch-status${lowBattery ? " is-low" : ""}`}>{collapsedBadge}</span>
       ) : null}
-      <div className="notch-panel">
-        {view === "done" ? (
+      {/* 접힌 동안에는 패널 안의 버튼·입력이 탭으로 잡히지 않게 inert를 준다. */}
+      <div className="notch-panel" inert={!expanded}>
+        <nav className="notch-nav" aria-label="Notch sections">
+          <span className="notch-nav-brand">NOTCH-01</span>
+          <button
+            type="button"
+            className={`notch-nav-item${navActive === "now" ? " is-on" : ""}`}
+            aria-pressed={navActive === "now"}
+            onClick={(e) => { e.stopPropagation(); setNav("now"); }}
+          >
+            NOW
+          </button>
+          <button
+            type="button"
+            className={`notch-nav-item${navActive === "timer" ? " is-on" : ""}`}
+            aria-pressed={navActive === "timer"}
+            onClick={(e) => { e.stopPropagation(); setNav("timer"); }}
+          >
+            TIMER
+          </button>
+          <button
+            type="button"
+            className={`notch-nav-item${navActive === "notes" ? " is-on" : ""}`}
+            aria-pressed={navActive === "notes"}
+            onClick={(e) => { e.stopPropagation(); setNav("notes"); }}
+          >
+            NOTES
+          </button>
+          <span className={`notch-nav-foot${lowBattery ? " is-low" : ""}`}>{navFooter}</span>
+        </nav>
+        <div className="notch-main">
+        {view === "notes" ? (
+          <div className="notch-notes">
+            <div className="notch-notes-list">
+              <span className="notch-notes-head">NOTES</span>
+              <div className="notch-notes-rows">
+                {orderedNotes.map((note) => (
+                  <button
+                    key={note.id}
+                    type="button"
+                    className={`notch-note-row${note.id === activeNoteId ? " is-on" : ""}`}
+                    onClick={(e) => { e.stopPropagation(); openNote(note); }}
+                  >
+                    <span className="notch-note-stamp">{noteStamp(note.updatedAt)}</span>
+                    <span className="notch-note-preview">{notePreview(note.text)}</span>
+                    {note.id === pinnedNoteId && <span className="notch-note-pin">PIN</span>}
+                  </button>
+                ))}
+                {notes.length === 0 && <span className="notch-notes-empty">새 메모를 적어 두세요.</span>}
+              </div>
+              <button
+                type="button"
+                className="notch-note-new"
+                onClick={(e) => { e.stopPropagation(); startNewNote(); }}
+              >
+                + NEW
+              </button>
+            </div>
+            <div className="notch-notes-editor" onClick={(e) => e.stopPropagation()}>
+              <textarea
+                className="notch-note-input"
+                value={noteDraft}
+                onChange={(e) => { setNoteDraft(e.target.value); setNoteStatus("editing"); }}
+                placeholder="메모"
+                spellCheck={false}
+              />
+              <div className="notch-note-bar">
+                <span className={`notch-note-state${noteStatus === "saved" ? " is-saved" : ""}`}>
+                  {noteStatus === "saved" ? "SAVED" : noteStatus === "editing" ? "EDITING" : ""}
+                </span>
+                <button type="button" className="notch-btn" onClick={togglePinNote} disabled={!activeNoteId}>
+                  {activeNoteId && pinnedNoteId === activeNoteId ? "UNPIN" : "PIN"}
+                </button>
+                <button
+                  type="button"
+                  className={`notch-btn${deleteArmed ? " is-armed" : ""}`}
+                  onClick={() => {
+                    if (!deleteArmed) {
+                      setDeleteArmed(true);
+                      return;
+                    }
+                    deleteActiveNote();
+                  }}
+                  disabled={!activeNoteId}
+                >
+                  {deleteArmed ? "SURE?" : "DELETE"}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : view === "done" ? (
           <div className="notch-timer-panel" role="status">
             <span className="notch-timer-done">{`${timerTag(timer)} DONE`}</span>
             <span className="notch-timer-caption">{timerDoneCaption(timer)}</span>
@@ -1107,8 +1467,7 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
                     <button type="button" className="notch-btn" onClick={resumeTimer}>Resume</button>
                   )}
                   <button type="button" className="notch-btn" onClick={clearTimer}>Cancel</button>
-                  {hasMedia && <button type="button" className="notch-btn" onClick={() => { setEditingTimer(false); setInspectingMedia(true); }}>Media</button>}
-                  {editingTimer && <button type="button" className="notch-btn" onClick={() => setEditingTimer(false)}>Back</button>}
+
                 </div>
               </>
             ) : (
@@ -1142,7 +1501,6 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
                 )}
                 <div className="notch-controls">
                   <button type="submit" className="notch-btn is-start">Start</button>
-                  <button type="button" className="notch-btn" onClick={() => setEditingTimer(false)}>Back</button>
                 </div>
               </form>
             )}
@@ -1171,7 +1529,6 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
               <span className="notch-hud-ping">{`PING ${hudPing}ms`}</span>
               <span>{`POLL ${hudPolls}`}</span>
             </span>
-            <button type="button" className="notch-btn notch-timer-open" onClick={(e) => { e.stopPropagation(); setEditingTimer(true); }}>TIMER</button>
           </div>
         ) : (
           <>
@@ -1238,12 +1595,10 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
           <button type="button" className="notch-btn" onClick={control("Next")} disabled={playPending || !media.canNext} aria-label="다음">
             NEXT
           </button>
-          <button type="button" className="notch-btn notch-timer-btn" onClick={(e) => { e.stopPropagation(); setInspectingMedia(false); setEditingTimer(true); }}>
-            {timerActive ? timerChip : "TIMER"}
-          </button>
         </div>
           </>
         )}
+        </div>
       </div>
       <span className="notch-scan" />
     </div>

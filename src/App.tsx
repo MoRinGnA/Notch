@@ -62,6 +62,11 @@ export function App() {
     setHovering(false);
   }, [hoverOpen]);
 
+  // 트레이에서 새 메모를 열면 노치를 고정해 펼친 채로 둔다.
+  useEffect(() => {
+    return window.notchApi?.onNewNote(() => setPinned(true));
+  }, []);
+
   useEffect(() => {
     return window.notchApi?.onToggle(() => {
       if (pinnedRef.current) {

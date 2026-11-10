@@ -24,6 +24,18 @@ interface NotchBattery {
   charging: boolean;
 }
 
+interface NotchNote {
+  id: string;
+  text: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+interface NotchNotesData {
+  pinnedId: string | null;
+  notes: NotchNote[];
+}
+
 interface NotchSettings {
   hoverOpen: boolean;
   toggleShortcut: string;
@@ -44,5 +56,10 @@ interface Window {
     getYoutubeThumb: (track: string, artist: string) => Promise<string>;
     getWeather: () => Promise<{ tempC: number; kind: string; city: string } | null>;
     controlMedia: (action: "Play" | "Pause" | "Previous" | "Next", target?: { app?: string; title?: string }) => Promise<boolean>;
+    getNotes: () => Promise<NotchNotesData>;
+    saveNote: (note: { id: string | null; text: string }) => Promise<NotchNote | null>;
+    pinNote: (id: string | null) => Promise<NotchNotesData>;
+    deleteNote: (id: string) => Promise<NotchNotesData>;
+    onNewNote: (callback: () => void) => () => void;
   };
 }

@@ -6,7 +6,8 @@ import path from "node:path";
 
 // 가사 길이에 따라 노치가 넓어질 수 있도록 창을 넉넉히 둔다.
 const WINDOW_WIDTH = 900;
-const WINDOW_HEIGHT = 220;
+// 펼친 화면이 내비게이션과 메모 편집기를 담을 만큼 세로로 길다.
+const WINDOW_HEIGHT = 340;
 
 interface CpuSample {
   idle: number;
@@ -551,7 +552,8 @@ ipcMain.handle("notch:media-control", async (_event, target: MediaTarget): Promi
 // 트레이 객체는 앱이 실행되는 동안 유지해야 아이콘이 사라지지 않는다.
 let tray: Tray | null = null;
 
-function createTray(): void {
+// assets/tray.png를 못 읽는 경우에도 트레이 아이콘이 비지 않도록 직접 그린다.
+function fallbackTrayIcon(): Electron.NativeImage {
   const size = 32;
   const pixels = Buffer.alloc(size * size * 4);
   for (let y = 0; y < size; y++) {
@@ -566,7 +568,12 @@ function createTray(): void {
       pixels[offset + 3] = 255;
     }
   }
-  tray = new Tray(nativeImage.createFromBitmap(pixels, { width: size, height: size }));
+  return nativeImage.createFromBitmap(pixels, { width: size, height: size });
+}
+
+function createTray(): void {
+  const image = nativeImage.createFromPath(path.join(__dirname, "../assets/tray.png"));
+  tray = new Tray(image.isEmpty() ? fallbackTrayIcon() : image);
   tray.setToolTip("Notch");
   updateTrayMenu();
 }
@@ -578,8 +585,18 @@ const SHORTCUT_CHOICES = [
   { label: "Ctrl+Alt+Shift+N", accelerator: "CommandOrControl+Alt+Shift+N" },
 ];
 
+// 트레이에서 바로 새 메모를 열면 노치를 펼친 채로 메모 화면을 띄운다.
+function openNewNote(): void {
+  const win = notchWindow;
+  if (!win || win.isDestroyed()) return;
+  if (!win.isVisible()) win.showInactive();
+  win.webContents.send("notch:new-note");
+}
+
 function buildTrayMenu(): Menu {
   return Menu.buildFromTemplate([
+    { label: "새 메모", click: () => openNewNote() },
+    { type: "separator" },
     {
       label: "마우스 올리면 펼치기",
       type: "checkbox",
@@ -713,17 +730,112 @@ function applySettings(): void {
 
 ipcMain.handle("notch:settings", () => settings);
 
+// JSON 파일은 임시 파일에 쓴 뒤 바꿔치기해, 쓰는 도중 앱이 꺼져도 반쯤 쓴 파일이 남지 않게 한다.
+function writeJsonFile(file: string, value: unknown, failure: string): void {
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const temp = `${file}.tmp`;
+    fs.writeFileSync(temp, JSON.stringify(value, null, 2) + "\n", "utf8");
+    fs.renameSync(temp, file);
+  } catch (error) {
+    console.warn(failure, error);
+  }
+}
+
 // 트레이 메뉴에서 바꾸면 파일에 저장하고 바로 적용한다.
 function saveSettings(patch: Partial<NotchSettings>): void {
   const next = { ...settings, ...patch };
-  try {
-    fs.mkdirSync(path.dirname(settingsFile()), { recursive: true });
-    fs.writeFileSync(settingsFile(), JSON.stringify(next, null, 2) + "\n", "utf8");
-  } catch (error) {
-    console.warn("설정을 저장하지 못했습니다:", error);
-  }
+  writeJsonFile(settingsFile(), next, "설정을 저장하지 못했습니다:");
   applySettings();
 }
+
+interface Note {
+  id: string;
+  text: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+interface NotesData {
+  pinnedId: string | null;
+  notes: Note[];
+}
+
+// 메모는 설정과 같은 사용자 폴더의 notes.json 한 파일에 모아 둔다.
+const notesFile = (): string => path.join(app.getPath("appData"), "Notch", "notes.json");
+let notesData: NotesData | null = null;
+
+function readNotes(): NotesData {
+  if (notesData) return notesData;
+  try {
+    const raw = JSON.parse(fs.readFileSync(notesFile(), "utf8")) as Partial<NotesData>;
+    const notes = Array.isArray(raw.notes)
+      ? raw.notes
+          .filter((note) => note && typeof note.id === "string" && typeof note.text === "string")
+          .map((note) => ({
+            id: note.id,
+            text: note.text.slice(0, 20000),
+            createdAt: Number.isFinite(note.createdAt) ? note.createdAt : Date.now(),
+            updatedAt: Number.isFinite(note.updatedAt) ? note.updatedAt : Date.now(),
+          }))
+      : [];
+    notesData = { pinnedId: typeof raw.pinnedId === "string" ? raw.pinnedId : null, notes };
+  } catch {
+    notesData = { pinnedId: null, notes: [] };
+  }
+  return notesData;
+}
+
+function writeNotes(next: NotesData): void {
+  notesData = next;
+  writeJsonFile(notesFile(), next, "메모를 저장하지 못했습니다:");
+}
+
+// 최근에 고친 메모가 앞에 온다.
+const sortedNotes = (data: NotesData): NotesData => ({
+  ...data,
+  notes: [...data.notes].sort((a, b) => b.updatedAt - a.updatedAt),
+});
+
+ipcMain.handle("notch:notes", (): NotesData => sortedNotes(readNotes()));
+
+ipcMain.handle("notch:note-save", (_event, input: { id: string | null; text: string }): Note | null => {
+  const data = readNotes();
+  const text = (input?.text ?? "").slice(0, 20000);
+  const now = Date.now();
+  if (input?.id) {
+    const existing = data.notes.find((note) => note.id === input.id);
+    if (!existing) return null;
+    const updated = { ...existing, text, updatedAt: now };
+    writeNotes({ ...data, notes: data.notes.map((note) => (note.id === existing.id ? updated : note)) });
+    return updated;
+  }
+  const note: Note = {
+    id: `${now.toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    text,
+    createdAt: now,
+    updatedAt: now,
+  };
+  writeNotes({ ...data, notes: [...data.notes, note] });
+  return note;
+});
+
+// 고정은 한 메모만 허용하고, 같은 메모를 다시 누르면 해제된다.
+ipcMain.handle("notch:note-pin", (_event, id: string | null): NotesData => {
+  const data = readNotes();
+  const pinnedId = id && data.notes.some((note) => note.id === id) ? id : null;
+  writeNotes({ ...data, pinnedId });
+  return sortedNotes(readNotes());
+});
+
+ipcMain.handle("notch:note-delete", (_event, id: string): NotesData => {
+  const data = readNotes();
+  writeNotes({
+    pinnedId: data.pinnedId === id ? null : data.pinnedId,
+    notes: data.notes.filter((note) => note.id !== id),
+  });
+  return sortedNotes(readNotes());
+});
 
 // 앞쪽 창이 화면을 꽉 채운 전체화면인지 판정한다. 바탕화면(Progman/WorkerW)은 제외한다.
 const FULLSCREEN_SCRIPT = `
@@ -802,6 +914,7 @@ function createWindow(): void {
     alwaysOnTop: true,
     skipTaskbar: true,
     hasShadow: false,
+    icon: path.join(__dirname, "../assets/icon.png"),
     backgroundColor: "#00000000",
     webPreferences: {
       contextIsolation: true,
@@ -827,28 +940,37 @@ function createWindow(): void {
   }
 }
 
-app.whenReady().then(() => {
-  const notifyPowerChange = (onBattery: boolean) => {
-    for (const win of BrowserWindow.getAllWindows()) {
-      win.webContents.send("notch:power-change", onBattery);
-    }
-  };
-  powerMonitor.on("on-ac", () => notifyPowerChange(false));
-  powerMonitor.on("on-battery", () => notifyPowerChange(true));
-  powerMonitor.on("resume", () => notifyPowerChange(powerMonitor.isOnBatteryPower()));
-
-  createTray();
-  createWindow();
-  applySettings();
-  // 설정 파일을 고치면 1초 안에 다시 적용한다.
-  fs.watchFile(settingsFile(), { interval: 1000 }, () => applySettings());
-
-
-
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+// 창을 두 개 띄우면 서로 같은 notes.json·settings.json을 덮어쓰므로 한 번에 하나만 실행한다.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    const win = notchWindow;
+    if (!win || win.isDestroyed()) return;
+    if (!win.isVisible()) win.showInactive();
   });
-});
+
+  void app.whenReady().then(() => {
+    const notifyPowerChange = (onBattery: boolean) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send("notch:power-change", onBattery);
+      }
+    };
+    powerMonitor.on("on-ac", () => notifyPowerChange(false));
+    powerMonitor.on("on-battery", () => notifyPowerChange(true));
+    powerMonitor.on("resume", () => notifyPowerChange(powerMonitor.isOnBatteryPower()));
+
+    createTray();
+    createWindow();
+    applySettings();
+    // 설정 파일을 고치면 1초 안에 다시 적용한다.
+    fs.watchFile(settingsFile(), { interval: 1000 }, () => applySettings());
+
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+  });
+}
 
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();

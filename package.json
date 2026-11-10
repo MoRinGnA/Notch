@@ -1,13 +1,15 @@
 {
   "name": "notch",
   "version": "1.0.0",
-  "description": "",
+  "description": "Windows 상단 미디어·타이머 노치 위젯",
+  "author": "MoRinGnA",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit -p tsconfig.json && vite build && tsc -p electron/tsconfig.json && node -e \"require('fs').copyFileSync('electron/package.json','dist-electron/package.json')\"",
     "dist:win": "npm run build && electron-builder --win portable --x64 --publish never",
-    "start": "electron ."
+    "start": "electron .",
+    "icon": "node scripts/make-icon.mjs"
   },
   "build": {
     "appId": "com.notch.app",
@@ -15,14 +17,16 @@
     "directories": {
       "output": "release"
     },
+    "icon": "assets/icon.ico",
     "files": [
       "dist/**",
-      "dist-electron/**"
+      "dist-electron/**",
+      "assets/**"
     ],
     "win": {
       "target": "portable",
       "artifactName": "Notch.exe",
-      "signAndEditExecutable": false
+      "signExecutable": false
     }
   },
   "license": "UNLICENSED",

@@ -145,8 +145,8 @@ body,
   pointer-events: none;
   z-index: 1;
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+    linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
   background-size: 18px 18px;
 }
 
@@ -306,9 +306,9 @@ body,
 }
 
 .notch.is-expanded {
-  width: 430px;
+  width: 600px;
   max-width: 860px;
-  height: 180px;
+  height: 280px;
   border-radius: 0 0 16px 16px;
 }
 
@@ -379,8 +379,9 @@ body,
   bottom: 8px;
 }
 
+/* 펼친 화면에서는 왼쪽 내비게이션 하단이 상태 문구를 맡는다. */
 .notch.is-expanded .notch-title {
-  transition: opacity 0.16s ease 0.14s;
+  display: none;
 }
 
 /* 접힌 모드: 충전 중이거나 부족할 때만 오른쪽 끝에 CHG/LOW */
@@ -548,11 +549,6 @@ body,
   user-select: text;
 }
 
-.notch-timer-open {
-  position: absolute;
-  right: 0;
-  bottom: -6px;
-}
 
 /* 충전 중 표시: 폰트 이모지 대신 흰 도형으로 그린 번개 */
 .notch-bolt {
@@ -576,18 +572,20 @@ body,
   transition-delay: 0s;
 }
 
-/* 펼친 패널: 곡 정보, 가사, 재생 버튼 (네온/글로우 없음) */
+/* 펼친 패널: 왼쪽 내비게이션 + 오른쪽 작업 영역 (네온/글로우 없음) */
 .notch-panel {
   position: absolute;
   z-index: 2;
-  left: 28px;
-  right: 28px;
-  top: 18px;
-  bottom: 12px;
+  left: 22px;
+  right: 22px;
+  top: 16px;
+  bottom: 14px;
   display: flex;
-  flex-direction: column;
-  gap: 5px;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 16px;
   opacity: 0;
+  pointer-events: none;
   /* 접힐 때는 위로 살짝 내려앉으며 빠지게 */
   transform: translateY(7px);
   pointer-events: none;
@@ -600,11 +598,91 @@ body,
 /* 본체가 열린 뒤 내용이 살짝 늦게 따라 올라오며 자리를 잡는다. */
 .notch.is-expanded .notch-panel {
   opacity: 1;
+  pointer-events: auto;
   transform: none;
   pointer-events: auto;
   transition:
     opacity 0.2s ease 0.1s,
     transform 0.44s cubic-bezier(0.34, 1.56, 0.64, 1) 0.05s;
+}
+
+/* 섹션 내비게이션: 도면의 라벨 열처럼 왼쪽에 세로로 둔다 */
+.notch-nav {
+  flex: none;
+  width: 78px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 12px;
+  border-right: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.notch-nav-brand {
+  padding: 0 0 10px 8px;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 8px;
+  letter-spacing: 0.16em;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.notch-nav-item {
+  position: relative;
+  padding: 5px 8px;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.45);
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.notch-nav-item:hover {
+  color: #ffffff;
+}
+
+.notch-nav-item.is-on {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+}
+
+/* 선택 표시는 포인트 컬러의 얇은 세로 선 하나로만 한다. */
+.notch-nav-item.is-on::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  background: var(--notch-accent);
+}
+
+.notch-nav-item:focus-visible {
+  outline: 1px solid rgba(255, 255, 255, 0.35);
+  outline-offset: 1px;
+}
+
+.notch-nav-foot {
+  margin-top: auto;
+  padding-left: 8px;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.notch-nav-foot.is-low {
+  color: var(--notch-accent);
+}
+
+.notch-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
 }
 
 .notch-info {
@@ -780,7 +858,11 @@ body,
 /* 펼친 가사 줄은 접힌 쪽보다 조금 넓게 빛을 퍼뜨려 색이 한 점처럼 보이지 않게 한다. */
 .notch-line-shine {
   position: absolute;
-  inset: 0;
+  /* .notch-line의 위쪽 패딩(1px)만큼 내려야 원본 글자와 정확히 겹친다. */
+  top: 1px;
+  right: 0;
+  bottom: 1px;
+  left: 0;
   pointer-events: none;
   color: var(--media-accent, var(--notch-accent));
   -webkit-mask-image: linear-gradient(90deg, transparent 43%, #000 50%, transparent 57%);
@@ -976,11 +1058,186 @@ body,
   gap: 18px;
 }
 
-/* 펼친 화면의 TIMER는 재생 버튼과 떨어져 오른쪽 구석에 둔다. */
-.notch-timer-btn {
-  position: absolute;
-  right: 0;
-  bottom: -6px;
+
+/* 메모: 왼쪽 최근 목록, 오른쪽 편집기 */
+.notch-notes {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 14px;
+}
+
+.notch-notes-list {
+  flex: none;
+  width: 170px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+
+.notch-notes-head {
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 8px;
+  letter-spacing: 0.16em;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.notch-notes-rows {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* 메모가 화면보다 많으면 목록을 굴려서 전부 볼 수 있게 한다. */
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+}
+
+.notch-notes-rows::-webkit-scrollbar {
+  width: 3px;
+}
+
+.notch-notes-rows::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.notch-notes-rows::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.notch-note-row {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 6px;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 10px;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.notch-note-row:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: #ffffff;
+}
+
+.notch-note-row.is-on {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+.notch-note-stamp {
+  flex: none;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.38);
+  font-variant-numeric: tabular-nums;
+}
+
+.notch-note-preview {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notch-note-pin {
+  flex: none;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 7px;
+  letter-spacing: 0.1em;
+  color: var(--notch-accent);
+}
+
+.notch-notes-empty {
+  padding: 4px 6px;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.notch-note-new {
+  padding: 4px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.7);
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.notch-note-new:hover {
+  background: #ffffff;
+  color: #000000;
+}
+
+.notch-notes-editor {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.notch-note-input {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.03);
+  color: #f2f2f2;
+  padding: 8px 9px;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.55;
+  outline: none;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.notch-note-input::placeholder {
+  color: rgba(255, 255, 255, 0.28);
+}
+
+.notch-note-input:focus {
+  border-color: rgba(255, 255, 255, 0.32);
+}
+
+.notch-note-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 삭제 확인을 기다리는 버튼은 포인트 컬러로 바뀌어 한 번 더 누르게 한다. */
+.notch-btn.is-armed {
+  background: var(--notch-accent);
+  color: #000000;
+}
+
+.notch-note-state {
+  flex: 1;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.notch-note-state.is-saved {
+  color: var(--notch-accent);
 }
 
 /* 가사 한 줄의 실제 폭을 재는 보이지 않는 자 (펼친 화면 폭 계산용). */
