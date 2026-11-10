@@ -38,17 +38,20 @@ body,
   -webkit-tap-highlight-color: transparent;
   background: transparent;
   border-radius: 0;
-  /* 접힌 콘텐츠의 가변 폭과 펼친 고정 폭 사이를 보간한다. */
+  /* 접힌 콘텐츠의 가변 폭과 펼친 고정 폭 사이를 보간한다.
+     높이는 끝에서 조금 넘쳤다가 자리 잡는 스프링 곡선을 써서 여닫는 무게를 살린다. */
   interpolate-size: allow-keywords;
   transition:
-    width 0.3s cubic-bezier(0.22, 1, 0.36, 1),
-    max-width 0.3s cubic-bezier(0.22, 1, 0.36, 1),
-    height 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+    width 0.36s cubic-bezier(0.3, 1.25, 0.5, 1),
+    max-width 0.36s cubic-bezier(0.3, 1.25, 0.5, 1),
+    height 0.44s cubic-bezier(0.34, 1.5, 0.64, 1);
 }
 
-/* 접을 때 패널이 먼저 사라진 뒤 본체가 줄어든다. */
+/* 접을 때는 패널이 먼저 사라진 뒤, 넘치지 않고 매끄럽게 줄어든다. */
 .notch.is-collapsed {
-  transition-delay: 0.08s;
+  transition-duration: 0.3s;
+  transition-timing-function: cubic-bezier(0.32, 0.72, 0.28, 1);
+  transition-delay: 0.06s;
 }
 
 /* 검정 본체: 아래 모서리만 둥글고, 위 모서리는 바깥으로 휘어 상단에 이어짐 */
@@ -149,7 +152,8 @@ body,
 
 .notch.is-collapsed {
   min-width: 154px;
-  max-width: 420px;
+  /* 긴 가사도 생략되지 않도록 창 폭 안에서 넓어진다. */
+  max-width: 860px;
   height: 40px;
   padding: 0 16px;
   box-sizing: border-box;
@@ -168,8 +172,10 @@ body,
   position: relative;
   z-index: 2;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
+  justify-content: center;
+  gap: 12px;
   width: max-content;
   max-width: min(388px, 100%);
   min-width: 0;
@@ -179,7 +185,81 @@ body,
   line-height: 1.25;
   white-space: nowrap;
   opacity: 1;
-  transition: opacity 0.12s ease 0.2s;
+  /* 접힘이 끝나갈 때쯤 다시 나타나 본체와 부딪히지 않게 한다. */
+  transition: opacity 0.14s ease 0.26s;
+}
+
+/* 가사가 있으면 가장 긴 가사 줄에 맞춰 늘어난 폭을 이 행이 채운다. */
+.notch-now.has-lyric {
+  width: 100%;
+  max-width: 100%;
+  justify-content: flex-start;
+}
+
+/* 왼쪽: 작은 가수 이름 위에 곡 제목 */
+.notch-now-track {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  max-width: 152px;
+  min-width: 0;
+}
+
+/* 곡 정보와 가사 사이를 나누는 1px 구분선 */
+.notch-now-rule {
+  flex: none;
+  width: 1px;
+  height: 18px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/* 오른쪽: 현재 가사 한 줄 */
+.notch-now-lyric {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 12px;
+  letter-spacing: normal;
+}
+
+/* 보이지 않는 폭 측정용: 곡에서 가장 긴 가사 줄 */
+.notch-now-lyric-sizer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.notch-now-lyric-line {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 접힌 가사 위를 지나가는 빛: 포인트 컬러 사본에 이동하는 마스크를 건다. */
+.notch-now-shine {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  color: var(--media-accent, var(--notch-accent));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-mask-image: linear-gradient(90deg, transparent 46%, #000 50%, transparent 54%);
+  mask-image: linear-gradient(90deg, transparent 46%, #000 50%, transparent 54%);
+  -webkit-mask-size: 300% 100%;
+  mask-size: 300% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  transition:
+    -webkit-mask-position 0.35s linear,
+    mask-position 0.35s linear;
 }
 
 .notch.is-expanded .notch-now {
@@ -193,7 +273,6 @@ body,
 
 .notch-now-title {
   display: block;
-  width: 100%;
   max-width: 100%;
   overflow: hidden;
 }
@@ -219,13 +298,16 @@ body,
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: rgba(255, 255, 255, 0.55);
-  font-size: 9px;
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  line-height: 1.35;
 }
 
 .notch.is-expanded {
   width: 430px;
-  max-width: 430px;
+  max-width: 860px;
   height: 180px;
   border-radius: 0 0 16px 16px;
 }
@@ -397,6 +479,52 @@ body,
   gap: 8px;
 }
 
+/* 타이머 종류 선택: 호버/선택은 흑백 반전으로만 구분한다 */
+.notch-modes {
+  display: flex;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.notch-mode {
+  padding: 3px 9px;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.55);
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.notch-mode:hover {
+  color: #ffffff;
+}
+
+.notch-mode.is-on {
+  background: var(--notch-accent);
+  color: #0c0c0e;
+}
+
+/* 포인트 컬러는 살아 있는 상태에만 쓴다: 진행 중인 칩·캐션·시작 버튼 */
+.notch-collapsed-timer,
+.notch-timer-chip {
+  color: var(--notch-accent);
+}
+
+.notch-collapsed-timer.is-paused,
+.notch-timer-chip.is-paused {
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.notch-timer-caption.is-live {
+  color: var(--notch-accent);
+}
+
+.notch-btn.is-start {
+  color: var(--notch-accent);
+}
+
 .notch-timer-clock {
   font-size: 28px;
   line-height: 1;
@@ -460,21 +588,23 @@ body,
   flex-direction: column;
   gap: 5px;
   opacity: 0;
+  /* 접힐 때는 위로 살짝 내려앉으며 빠지게 */
+  transform: translateY(7px);
   pointer-events: none;
-  transition: opacity 0.08s ease;
+  transition:
+    opacity 0.1s ease,
+    transform 0.18s ease;
   color: #ffffff;
 }
 
-.notch.is-expanded .notch-panel {
-  transition: opacity 0.16s ease 0.14s;
-}
-
-.notch.is-expanded .notch-panel {
-  pointer-events: auto;
-}
-
+/* 본체가 열린 뒤 내용이 살짝 늦게 따라 올라오며 자리를 잡는다. */
 .notch.is-expanded .notch-panel {
   opacity: 1;
+  transform: none;
+  pointer-events: auto;
+  transition:
+    opacity 0.2s ease 0.1s,
+    transform 0.44s cubic-bezier(0.34, 1.56, 0.64, 1) 0.05s;
 }
 
 .notch-info {
@@ -637,22 +767,32 @@ body,
 }
 
 .notch-line {
+  position: relative;
+  display: inline-block;
   font-size: 14px;
   font-weight: 700;
-  color: #ffffff;
+  color: #b8b8b8;
   line-height: 1.3;
   padding: 1px 0;
   word-break: keep-all;
 }
 
-/* 새 줄이 흰색으로 켜졌다가 회색으로 가라앉는 CRT 잔광 */
-.notch-line.is-active {
-  animation: notch-lyric-afterglow 0.5s steps(5, end) forwards;
-}
-
-@keyframes notch-lyric-afterglow {
-  from { color: #ffffff; }
-  to { color: #b8b8b8; }
+/* 펼친 가사 줄은 접힌 쪽보다 조금 넓게 빛을 퍼뜨려 색이 한 점처럼 보이지 않게 한다. */
+.notch-line-shine {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  color: var(--media-accent, var(--notch-accent));
+  -webkit-mask-image: linear-gradient(90deg, transparent 43%, #000 50%, transparent 57%);
+  mask-image: linear-gradient(90deg, transparent 43%, #000 50%, transparent 57%);
+  -webkit-mask-size: 300% 100%;
+  mask-size: 300% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  /* 재생 위치로 빛의 자리를 계산해 내려주므로, 틱 사이는 선형으로 이어 붙인다. */
+  transition:
+    -webkit-mask-position 0.35s linear,
+    mask-position 0.35s linear;
 }
 
 /* 가사가 없을 때: 앨범 이미지 */
@@ -830,9 +970,29 @@ body,
 }
 
 .notch-controls {
+  position: relative;
   display: flex;
   justify-content: center;
   gap: 18px;
+}
+
+/* 펼친 화면의 TIMER는 재생 버튼과 떨어져 오른쪽 구석에 둔다. */
+.notch-timer-btn {
+  position: absolute;
+  right: 0;
+  bottom: -6px;
+}
+
+/* 가사 한 줄의 실제 폭을 재는 보이지 않는 자 (펼친 화면 폭 계산용). */
+.notch-line-measure {
+  position: absolute;
+  left: 0;
+  top: 0;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 700;
 }
 
 .notch-btn {
@@ -904,6 +1064,11 @@ body,
   .notch-now-title:has(.is-overflowing),
   .notch-info-title:has(.is-overflowing) {
     text-overflow: ellipsis;
+  }
+
+  .notch-line-shine,
+  .notch-now-shine {
+    display: none;
   }
 
   .notch,

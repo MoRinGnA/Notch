@@ -3,6 +3,8 @@ import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type M
 interface NotchProps {
   expanded: boolean;
   onToggle: () => void;
+  onHoverStart?: () => void;
+  onHoverEnd?: () => void;
 }
 
 interface PendingPlay {
@@ -44,11 +46,18 @@ const EMPTY_MEDIA: NotchMedia = {
 
 const PROGRESS_TICK_MS = 250;
 
+type TimerMode = "timer" | "stopwatch" | "pomodoro";
+type PomodoroPhase = "focus" | "break";
+
+const POMODORO_FOCUS_MS = 25 * 60 * 1000;
+const POMODORO_BREAK_MS = 5 * 60 * 1000;
+
+// 스톱워치는 endsAt을 시작 시각으로 써서 경과 시간을 재고, 나머지는 종료 시각까지 남은 시간을 쓴다.
 type TimerState =
   | { status: "idle" }
-  | { status: "running"; endsAt: number }
-  | { status: "paused"; remainingMs: number }
-  | { status: "done" };
+  | { status: "running"; mode: TimerMode; phase: PomodoroPhase; round: number; endsAt: number }
+  | { status: "paused"; mode: TimerMode; phase: PomodoroPhase; round: number; remainingMs: number }
+  | { status: "done"; mode: TimerMode; phase: PomodoroPhase; round: number };
 
 type NotchView = "done" | "media" | "timer" | "hud";
 
@@ -59,6 +68,34 @@ function resolveView(timer: TimerState, hasMedia: boolean, playing: boolean, edi
   if (hasMedia && (playing || inspectingMedia)) return "media";
   if (timer.status !== "idle") return "timer";
   return hasMedia ? "media" : "hud";
+}
+
+// 스톱워치는 지난 시간, 나머지는 남은 시간.
+function timerSpan(timer: TimerState, now: number): number {
+  if (timer.status === "running") {
+    return timer.mode === "stopwatch" ? Math.max(0, now - timer.endsAt) : Math.max(0, timer.endsAt - now);
+  }
+  if (timer.status === "paused") return Math.max(0, timer.remainingMs);
+  return 0;
+}
+
+function timerTag(timer: TimerState): string {
+  if (timer.status !== "idle" && timer.mode === "pomodoro") return timer.phase === "focus" ? "FOCUS" : "BREAK";
+  if (timer.status !== "idle" && timer.mode === "stopwatch") return "STOP";
+  return "TIMER";
+}
+
+function timerChipLabel(timer: TimerState, clock: string): string {
+  return `${timer.status === "paused" ? "Ⅱ " : ""}${timerTag(timer)} ${clock}`;
+}
+
+function timerDoneCaption(timer: TimerState): string {
+  if (timer.status === "done" && timer.mode === "pomodoro") {
+    return timer.phase === "focus"
+      ? "Focus complete. Take a 5-minute break."
+      : "Break complete. Ready for the next focus session?";
+  }
+  return "Time is up.";
 }
 
 function timerClock(ms: number): string {
@@ -330,8 +367,92 @@ function ScrollingTitle({ text, className }: { text: string; className: string }
   );
 }
 
-export function Notch({ expanded, onToggle }: NotchProps) {
+function extractMediaAccent(image: HTMLImageElement): string {
+  try {
+    if (!image.complete || !image.naturalWidth || !image.naturalHeight) return "#e8833a";
+    const canvas = document.createElement("canvas");
+    const side = 24;
+    canvas.width = side;
+    canvas.height = side;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) return "#e8833a";
+    context.drawImage(image, 0, 0, side, side);
+    const { data } = context.getImageData(0, 0, side, side);
+    const bins = new Map<number, { score: number; red: number; green: number; blue: number; weight: number }>();
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i + 3] < 200) continue;
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      const high = Math.max(r, g, b);
+      const low = Math.min(r, g, b);
+      const saturation = high === 0 ? 0 : (high - low) / high;
+      const brightness = high / 255;
+      if (brightness < 0.12) continue;
+      const key = ((r >> 5) << 6) | ((g >> 5) << 3) | (b >> 5);
+      const weight = 0.25 + saturation;
+      const bin = bins.get(key) ?? { score: 0, red: 0, green: 0, blue: 0, weight: 0 };
+      bin.score += weight;
+      bin.red += r * weight;
+      bin.green += g * weight;
+      bin.blue += b * weight;
+      bin.weight += weight;
+      bins.set(key, bin);
+    }
+    const dominant = [...bins.values()].sort((a, b) => b.score - a.score)[0];
+    if (!dominant?.weight) return "#e8833a";
+    // Use the most common saturated color bucket rather than the cover's potentially muddy average.
+    const channels = [dominant.red, dominant.green, dominant.blue].map((sum) => Math.round(sum / dominant.weight));
+    const [red, green, blue] = channels.map((channel) => channel / 255);
+    const high = Math.max(red, green, blue);
+    const low = Math.min(red, green, blue);
+    const delta = high - low;
+    if (high * 255 < 34 || delta * 255 < 18) return "#e8833a";
+
+    // Lift dark cover colors in HSL so their hue survives but the accent stays legible on black.
+    const lightness = (high + low) / 2;
+    const saturation = delta === 0 ? 0 : delta / (1 - Math.abs(2 * lightness - 1));
+    const rawHue = delta === 0
+      ? 0
+      : high === red
+        ? 60 * (((green - blue) / delta) % 6)
+        : high === green
+          ? 60 * ((blue - red) / delta + 2)
+          : 60 * ((red - green) / delta + 4);
+    const hue = ((rawHue % 360) + 360) % 360;
+    const liftedLightness = Math.max(lightness, 0.82);
+    const chroma = (1 - Math.abs(2 * liftedLightness - 1)) * saturation;
+    const huePart = chroma * (1 - Math.abs(((hue / 60) % 2) - 1));
+    const offset = liftedLightness - chroma / 2;
+    const lifted = hue < 60
+      ? [chroma, huePart, 0]
+      : hue < 120
+        ? [huePart, chroma, 0]
+        : hue < 180
+          ? [0, chroma, huePart]
+          : hue < 240
+            ? [0, huePart, chroma]
+            : hue < 300
+              ? [huePart, 0, chroma]
+              : [chroma, 0, huePart];
+    const brightChannels = lifted.map((channel) => Math.round((channel + offset) * 255));
+    return `#${brightChannels.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+  } catch {
+    // Tainted or unsupported image sources fall back to the existing accent.
+    return "#e8833a";
+  }
+}
+
+export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchProps) {
   const notchRef = useRef<HTMLDivElement>(null);
+  // 접힌 미디어 행: 곡 정보(왼쪽)와 현재 가사(오른쪽)
+  const trackRef = useRef<HTMLSpanElement>(null);
+  const lyricSizerRef = useRef<HTMLSpanElement>(null);
+  // 곡에서 가장 긴 가사 줄에 맞춘 접힌 노치 폭. 가사가 없으면 null(내용 폭).
+  const [collapsedWidth, setCollapsedWidth] = useState<number | null>(null);
+  // 펼친 화면도 같은 가사 줄이 한 줄에 들어오도록 넓힌다.
+  const lineMeasureRef = useRef<HTMLSpanElement>(null);
+  const [expandedWidth, setExpandedWidth] = useState<number | null>(null);
   useEffect(() => {
     const notch = notchRef.current;
     if (!notch || !window.notchApi) return;
@@ -346,12 +467,14 @@ export function Notch({ expanded, onToggle }: NotchProps) {
   }, []);
 
   const [media, setMedia] = useState<NotchMedia>(EMPTY_MEDIA);
+  const [mediaAccent, setMediaAccent] = useState("#e8833a");
   const [lyrics, setLyrics] = useState<Lyrics>({ state: "idle", text: "", synced: [] });
   const [now, setNow] = useState(() => Date.now());
   const [battery, setBattery] = useState<NotchBattery | null>(null);
   const [timer, setTimer] = useState<TimerState>({ status: "idle" });
   const [timerNow, setTimerNow] = useState(() => Date.now());
   const [timerMinutes, setTimerMinutes] = useState("25");
+  const [timerMode, setTimerMode] = useState<TimerMode>("timer");
   const [editingTimer, setEditingTimer] = useState(false);
   const [inspectingMedia, setInspectingMedia] = useState(false);
   // 가사가 없을 때 채울 유튜브 썸네일(data URL). 없으면 빈 문자열.
@@ -452,10 +575,14 @@ export function Notch({ expanded, onToggle }: NotchProps) {
     const tick = () => {
       const current = Date.now();
       setTimerNow(current);
-      if (current >= timer.endsAt) {
-        setTimer((previous) => previous === timer ? { status: "done" } : previous);
-        setEditingTimer(false);
-      }
+      // 스톱워치는 끝이 없으므로 완료로 넘기지 않는다.
+      if (timer.mode === "stopwatch" || current < timer.endsAt) return;
+      setTimer((previous) =>
+        previous === timer
+          ? { status: "done", mode: timer.mode, phase: timer.phase, round: timer.round }
+          : previous,
+      );
+      setEditingTimer(false);
     };
     tick();
     const id = window.setInterval(tick, 250);
@@ -465,26 +592,57 @@ export function Notch({ expanded, onToggle }: NotchProps) {
   const startTimer = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     e.stopPropagation();
-    const minutes = Number(timerMinutes);
-    if (!Number.isInteger(minutes) || minutes < 1 || minutes > 1440) return;
     const current = Date.now();
     setTimerNow(current);
-    setTimer({ status: "running", endsAt: current + minutes * 60000 });
+    if (timerMode === "stopwatch") {
+      setTimer({ status: "running", mode: "stopwatch", phase: "focus", round: 1, endsAt: current });
+    } else if (timerMode === "pomodoro") {
+      setTimer({ status: "running", mode: "pomodoro", phase: "focus", round: 1, endsAt: current + POMODORO_FOCUS_MS });
+    } else {
+      const minutes = Number(timerMinutes);
+      if (!Number.isInteger(minutes) || minutes < 1 || minutes > 1440) return;
+      setTimer({ status: "running", mode: "timer", phase: "focus", round: 1, endsAt: current + minutes * 60000 });
+    }
     setEditingTimer(false);
     setInspectingMedia(false);
   };
 
+  // 포모도로는 완료 알림에서 다음 단계(휴식↔집중)를 직접 시작한다.
+  const startPomodoroPhase = (phase: PomodoroPhase, round: number) => {
+    const current = Date.now();
+    setTimerNow(current);
+    setTimer({
+      status: "running",
+      mode: "pomodoro",
+      phase,
+      round,
+      endsAt: current + (phase === "focus" ? POMODORO_FOCUS_MS : POMODORO_BREAK_MS),
+    });
+    setEditingTimer(false);
+  };
+
   const pauseTimer = () => {
     if (timer.status !== "running") return;
-    const remainingMs = timer.endsAt - Date.now();
-    setTimer(remainingMs <= 0 ? { status: "done" } : { status: "paused", remainingMs });
+    const current = Date.now();
+    const remainingMs = timer.mode === "stopwatch" ? Math.max(0, current - timer.endsAt) : timer.endsAt - current;
+    if (timer.mode === "stopwatch" || remainingMs > 0) {
+      setTimer({ status: "paused", mode: timer.mode, phase: timer.phase, round: timer.round, remainingMs });
+      return;
+    }
+    setTimer({ status: "done", mode: timer.mode, phase: timer.phase, round: timer.round });
   };
 
   const resumeTimer = () => {
     if (timer.status !== "paused") return;
     const current = Date.now();
     setTimerNow(current);
-    setTimer({ status: "running", endsAt: current + timer.remainingMs });
+    setTimer({
+      status: "running",
+      mode: timer.mode,
+      phase: timer.phase,
+      round: timer.round,
+      endsAt: timer.mode === "stopwatch" ? current - timer.remainingMs : current + timer.remainingMs,
+    });
   };
 
   const clearTimer = () => {
@@ -504,8 +662,8 @@ export function Notch({ expanded, onToggle }: NotchProps) {
   const livePosition = Math.min(media.duration, media.position + Math.max(0, elapsed));
 
   const mediaKey = `${media.title}|${media.artist}|${media.album}`;
+  // 접힌 노치에도 현재 가사를 보여줘야 하므로 펼침 여부와 무관하게 미리 불러온다.
   useEffect(() => {
-    if (!expanded) return;
     const current = mediaRef.current;
     if (!current.active || !current.title) {
       setLyrics({ state: "idle", text: "", synced: [] });
@@ -519,7 +677,7 @@ export function Notch({ expanded, onToggle }: NotchProps) {
     return () => {
       cancelled = true;
     };
-  }, [expanded, mediaKey]);
+  }, [mediaKey]);
 
   // 가사를 찾지 못한 곡은 유튜브 썸네일을 앨범처럼 띄운다. 실패하면 기존 앨범 아트로 돌아간다.
   useEffect(() => {
@@ -588,10 +746,40 @@ export function Notch({ expanded, onToggle }: NotchProps) {
 
   const hasMedia = media.active && media.title.length > 0;
   const shownTitle = cleanTitle(media.title);
+  // 표지가 있는 한 일시정지 중에도 그 곡의 대표색을 유지한다. 미디어가 사라질 때만 기본색으로 돌아간다.
+  const mediaAccentSource = hasMedia ? media.thumbnail : "";
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!mediaAccentSource) {
+      setMediaAccent("#e8833a");
+      return;
+    }
+    const image = new Image();
+    image.onload = () => {
+      if (!cancelled) setMediaAccent(extractMediaAccent(image));
+    };
+    image.onerror = () => {
+      if (!cancelled) setMediaAccent("#e8833a");
+    };
+    image.src = mediaAccentSource;
+    if (image.complete && image.naturalWidth > 0) setMediaAccent(extractMediaAccent(image));
+    return () => {
+      cancelled = true;
+    };
+  }, [mediaAccentSource]);
   const view = resolveView(timer, hasMedia, media.status === "Playing", expanded && editingTimer, expanded && inspectingMedia);
   const timerActive = timer.status === "running" || timer.status === "paused";
-  const timerRemaining = timer.status === "running" ? Math.max(0, timer.endsAt - timerNow) : timer.status === "paused" ? timer.remainingMs : 0;
-  const timerLabel = timerClock(timerRemaining);
+  const timerLabel = timerClock(timerSpan(timer, timerNow));
+  const timerChip = timerChipLabel(timer, timerLabel);
+  const timerCaption =
+    timer.status === "idle"
+      ? ""
+      : timer.mode === "pomodoro"
+        ? `${timer.phase === "focus" ? "Focus" : "Break"} · Round ${timer.round}`
+        : timer.mode === "stopwatch"
+          ? "Elapsed time"
+          : "Timer running";
 
   useEffect(() => {
     if (!expanded) {
@@ -690,6 +878,11 @@ export function Notch({ expanded, onToggle }: NotchProps) {
           ? `LOW ${battery.percent}%`
           : "NOTCH-01";
   const collapsedBadge = battery?.hasBattery ? (battery.charging ? "bolt" : lowBattery ? "LOW" : "") : "";
+  // 미디어를 펼친 화면에서는 NOTCH 문구를 빼고, 충전·배터리 부족일 때만 그 자리에 쓴다.
+  const footerText =
+    expanded && view === "media" && !(battery?.hasBattery && (battery.charging || lowBattery))
+      ? ""
+      : footerLabel;
   const progress = media.duration > 0 ? Math.min(1, Math.max(0, livePosition / media.duration)) : 0;
   const hudDate = new Date(hudNow);
   const pad2 = (value: number) => String(value).padStart(2, "0");
@@ -714,6 +907,91 @@ export function Notch({ expanded, onToggle }: NotchProps) {
       else break;
     }
   }
+  // 접힌 노치 오른쪽에 보여줄 현재 가사 한 줄. 빈 줄(간주)에서는 직전 가사를 유지한다.
+  const collapsedLyric = (() => {
+    if (!hasSynced) return "";
+    for (let i = Math.min(Math.max(0, activeLine), lyrics.synced.length - 1); i >= 0; i--) {
+      const text = lyrics.synced[i].text.trim();
+      if (text) return text;
+    }
+    return "";
+  })();
+  const widestLyric = hasSynced
+    ? lyrics.synced.reduce((longest, line) => (line.text.length > longest.length ? line.text : longest), "")
+    : "";
+  // 빛은 그 가사 줄이 화면에 머무는 동안 왼쪽에서 오른쪽으로 정확히 한 번 지나간다.
+  const activeLineTime = hasSynced ? lyrics.synced[activeLine]?.time ?? 0 : 0;
+  const nextLineTime = hasSynced ? lyrics.synced[activeLine + 1]?.time : undefined;
+  const lineEndTime = nextLineTime ?? (media.duration > activeLineTime ? media.duration : activeLineTime + 4);
+  const lineSpan = Math.min(12, Math.max(0.6, lineEndTime - activeLineTime));
+  // 이미 줄 중간이면 그만큼 앞선 지점에서 시작해 빛과 가사가 어긋나지 않게 한다.
+  const lineElapsed = Math.min(lineSpan, Math.max(0, livePosition - activeLineTime));
+  const shineProgress = lineSpan > 0 ? Math.min(1, Math.max(0, lineElapsed / lineSpan)) : 1;
+  // 줄 시작에 왼쪽 끝(75%), 줄이 끝나면 오른쪽 끝(25%)에 빛이 닿는다.
+  const shinePosition = `${(75 - 50 * shineProgress).toFixed(2)}% 0`;
+  // 접힌 가사에도 같은 빛살을 흘린다. 빈 줄(간주)에서는 이전 가사가 남아 있으므로 빛은 두지 않는다.
+  const collapsedShine = hasSynced && !!lyrics.synced[activeLine]?.text && !!collapsedLyric;
+
+  // 곡이 바뀔 때 가장 긴 가사 줄이 들어갈 만큼만 노치를 넓히고, 곡이 끝날 때까지 폭을 유지한다.
+  useEffect(() => {
+    if (!collapsedLyric) {
+      setCollapsedWidth(null);
+      return;
+    }
+    // 펼치는 동안에는 접힌 폭을 그대로 두어 넓어지는 시작점으로 쓴다.
+    if (expanded) return;
+    const notch = notchRef.current;
+    const track = trackRef.current;
+    const sizer = lyricSizerRef.current;
+    if (!notch || !track || !sizer) return;
+    let cancelled = false;
+    const measure = () => {
+      if (cancelled) return;
+      const style = getComputedStyle(notch);
+      const padding = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+      // 곡 정보 시작점부터 가장 긴 가사 끝까지. 구분선과 칸 사이 간격도 그대로 포함된다.
+      const content = sizer.getBoundingClientRect().right - track.getBoundingClientRect().left;
+      const width = Math.ceil(content + padding);
+      setCollapsedWidth((previous) => (previous === width ? previous : width));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(track);
+    observer.observe(sizer);
+    void document.fonts.ready.then(measure);
+    return () => {
+      cancelled = true;
+      observer.disconnect();
+    };
+  }, [expanded, collapsedLyric, widestLyric, shownTitle, timerActive, collapsedBadge]);
+
+  // 펼친 화면: 가장 긴 가사 줄이 두 줄로 접히지 않을 만큼만 넓힌다(좌우 여백 56 + 여유).
+  useEffect(() => {
+    if (!expanded || view !== "media" || !hasSynced || !widestLyric) {
+      setExpandedWidth(null);
+      return;
+    }
+    const measure = lineMeasureRef.current;
+    if (!measure) return;
+    let cancelled = false;
+    const update = () => {
+      if (cancelled) return;
+      setExpandedWidth(Math.min(860, Math.max(430, Math.ceil(measure.offsetWidth + 68))));
+    };
+    update();
+    void document.fonts.ready.then(update);
+    return () => {
+      cancelled = true;
+    };
+  }, [expanded, view, hasSynced, widestLyric]);
+
+  // 미디어 가사 외의 화면(타이머/HUD)에서는 긴 가사 폭을 물려받지 않고 기본 폭으로 돌아온다.
+  const notchWidth = expanded
+    ? view === "media" && hasSynced && widestLyric
+      ? expandedWidth ?? 430
+      : 430
+    : collapsedWidth;
+
   const showArt = lyrics.state === "missing" || lyrics.state === "instrumental" || lyrics.state === "idle";
   const lyricsText =
     lyrics.state === "ready"
@@ -730,7 +1008,13 @@ export function Notch({ expanded, onToggle }: NotchProps) {
       role="button"
       tabIndex={0}
       className={`notch ${expanded ? "is-expanded" : "is-collapsed"}${view === "media" ? " has-media" : ""}${media.status === "Playing" ? " is-playing" : ""}${!expanded && collapsedBadge ? " has-status" : ""}${timerActive && view === "media" ? " has-timer" : ""}`}
+      style={{
+        ...(notchWidth ? { width: `${notchWidth}px` } : {}),
+        "--media-accent": mediaAccent,
+      } as CSSProperties}
       onClick={onToggle}
+      onMouseEnter={onHoverStart}
+      onMouseLeave={onHoverEnd}
       onKeyDown={(e) => {
         if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
           e.preventDefault();
@@ -742,13 +1026,34 @@ export function Notch({ expanded, onToggle }: NotchProps) {
     >
       <span className="notch-body" />
       {view === "done" ? (
-        <span className="notch-collapsed-timer is-done" role="status">TIMER 완료</span>
+        <span className="notch-collapsed-timer is-done" role="status">{`${timerTag(timer)} DONE`}</span>
       ) : view === "timer" && timerActive ? (
-        <span className="notch-collapsed-timer">{timer.status === "paused" ? "PAUSED " : "TIMER "}{timerLabel}</span>
+        <span className={`notch-collapsed-timer${timer.status === "paused" ? " is-paused" : ""}`}>{timerChip}</span>
       ) : view === "media" ? (
-        <span className="notch-now">
-          <ScrollingTitle text={shownTitle} className="notch-now-title" />
-          {media.artist && <span className="notch-now-artist">{displayArtist(media.artist)}</span>}
+        <span className={`notch-now${collapsedLyric ? " has-lyric" : ""}`}>
+          <span ref={trackRef} className="notch-now-track">
+            {media.artist && <span className="notch-now-artist">{displayArtist(media.artist)}</span>}
+            <ScrollingTitle text={shownTitle} className="notch-now-title" />
+          </span>
+          {collapsedLyric && <span className="notch-now-rule" aria-hidden="true" />}
+          {collapsedLyric && (
+            <span className="notch-now-lyric">
+              <span ref={lyricSizerRef} className="notch-now-lyric-sizer" aria-hidden="true">{widestLyric}</span>
+              <span className="notch-now-lyric-line">
+                {collapsedLyric}
+                {collapsedShine && (
+                  <span
+                    key={activeLine}
+                    className="notch-now-shine"
+                    aria-hidden="true"
+                    style={{ maskPosition: shinePosition, WebkitMaskPosition: shinePosition }}
+                  >
+                    {collapsedLyric}
+                  </span>
+                )}
+              </span>
+            </span>
+          )}
         </span>
       ) : (
         <span className="notch-eyes">
@@ -756,8 +1061,10 @@ export function Notch({ expanded, onToggle }: NotchProps) {
           <span className="notch-eye" />
         </span>
       )}
-      {view === "media" && timerActive && <span className="notch-timer-chip">{timer.status === "paused" ? "Ⅱ " : ""}{timerLabel}</span>}
-      <span className={`notch-title${lowBattery ? " is-low" : ""}`}>{footerLabel}</span>
+      {view === "media" && timerActive && (
+        <span className={`notch-timer-chip${timer.status === "paused" ? " is-paused" : ""}`}>{timerChip}</span>
+      )}
+      {footerText && <span className={`notch-title${lowBattery ? " is-low" : ""}`}>{footerText}</span>}
       {collapsedBadge === "bolt" ? (
         <span className="notch-bolt" aria-label="충전 중" />
       ) : collapsedBadge ? (
@@ -766,9 +1073,24 @@ export function Notch({ expanded, onToggle }: NotchProps) {
       <div className="notch-panel">
         {view === "done" ? (
           <div className="notch-timer-panel" role="status">
-            <span className="notch-timer-done">TIMER 완료</span>
-            <span className="notch-timer-caption">설정한 시간이 끝났습니다.</span>
-            <button type="button" className="notch-btn" onClick={(e) => { e.stopPropagation(); clearTimer(); }}>확인</button>
+            <span className="notch-timer-done">{`${timerTag(timer)} DONE`}</span>
+            <span className="notch-timer-caption">{timerDoneCaption(timer)}</span>
+            <div className="notch-controls">
+              {timer.status === "done" && timer.mode === "pomodoro" && (
+                <button
+                  type="button"
+                  className="notch-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (timer.phase === "focus") startPomodoroPhase("break", timer.round);
+                    else startPomodoroPhase("focus", timer.round + 1);
+                  }}
+                >
+                  {timer.phase === "focus" ? "Start break" : "Start focus"}
+                </button>
+              )}
+              <button type="button" className="notch-btn" onClick={(e) => { e.stopPropagation(); clearTimer(); }}>Dismiss</button>
+            </div>
           </div>
         ) : view === "timer" ? (
           <div className="notch-timer-panel" onClick={(e) => {
@@ -776,26 +1098,51 @@ export function Notch({ expanded, onToggle }: NotchProps) {
           }}>
             {timerActive ? (
               <>
-                <span className="notch-timer-caption">{timer.status === "paused" ? "일시정지" : "타이머 진행 중"}</span>
+                <span className={`notch-timer-caption${timer.status === "running" ? " is-live" : ""}`}>{timer.status === "paused" ? `Paused · ${timerCaption}` : timerCaption}</span>
                 <span className="notch-timer-clock">{timerLabel}</span>
                 <div className="notch-controls">
                   {timer.status === "running" ? (
-                    <button type="button" className="notch-btn" onClick={pauseTimer}>일시정지</button>
+                    <button type="button" className="notch-btn" onClick={pauseTimer}>Pause</button>
                   ) : (
-                    <button type="button" className="notch-btn" onClick={resumeTimer}>계속</button>
+                    <button type="button" className="notch-btn" onClick={resumeTimer}>Resume</button>
                   )}
-                  <button type="button" className="notch-btn" onClick={clearTimer}>취소</button>
-                  {hasMedia && <button type="button" className="notch-btn" onClick={() => { setEditingTimer(false); setInspectingMedia(true); }}>미디어</button>}
-                  {editingTimer && <button type="button" className="notch-btn" onClick={() => setEditingTimer(false)}>뒤로</button>}
+                  <button type="button" className="notch-btn" onClick={clearTimer}>Cancel</button>
+                  {hasMedia && <button type="button" className="notch-btn" onClick={() => { setEditingTimer(false); setInspectingMedia(true); }}>Media</button>}
+                  {editingTimer && <button type="button" className="notch-btn" onClick={() => setEditingTimer(false)}>Back</button>}
                 </div>
               </>
             ) : (
               <form className="notch-timer-form" onSubmit={startTimer}>
-                <label htmlFor="timer-minutes">타이머 시간 (분)</label>
-                <input id="timer-minutes" type="number" min="1" max="1440" step="1" required value={timerMinutes} onChange={(e) => setTimerMinutes(e.target.value)} />
+                <div className="notch-modes" role="group" aria-label="Timer mode">
+                  {([
+                    ["timer", "Timer"],
+                    ["stopwatch", "Stopwatch"],
+                    ["pomodoro", "Pomodoro"],
+                  ] as const).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={`notch-mode${timerMode === value ? " is-on" : ""}`}
+                      aria-pressed={timerMode === value}
+                      onClick={(e) => { e.stopPropagation(); setTimerMode(value); }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {timerMode === "timer" ? (
+                  <>
+                    <label htmlFor="timer-minutes">Timer duration (minutes)</label>
+                    <input id="timer-minutes" type="number" min="1" max="1440" step="1" required value={timerMinutes} onChange={(e) => setTimerMinutes(e.target.value)} />
+                  </>
+                ) : (
+                  <span className="notch-timer-caption">
+                    {timerMode === "pomodoro" ? "25 min focus · 5 min break" : "Counting up from 0:00"}
+                  </span>
+                )}
                 <div className="notch-controls">
-                  <button type="submit" className="notch-btn">시작</button>
-                  <button type="button" className="notch-btn" onClick={() => setEditingTimer(false)}>뒤로</button>
+                  <button type="submit" className="notch-btn is-start">Start</button>
+                  <button type="button" className="notch-btn" onClick={() => setEditingTimer(false)}>Back</button>
                 </div>
               </form>
             )}
@@ -856,6 +1203,14 @@ export function Notch({ expanded, onToggle }: NotchProps) {
           <div className="notch-lyrics notch-lyrics-synced">
             <div key={activeLine} className="notch-line is-active">
               {lyrics.synced[activeLine]?.text || "\u00a0"}
+              {/* 줄이 바뀔 때 이 복제된 글자 위로 빛이 한 번 지나간다 */}
+              <span
+                className="notch-line-shine"
+                aria-hidden="true"
+                style={{ maskPosition: shinePosition, WebkitMaskPosition: shinePosition }}
+              >
+                {lyrics.synced[activeLine]?.text || "\u00a0"}
+              </span>
             </div>
           </div>
         ) : showArt && ytThumb ? (
@@ -870,6 +1225,9 @@ export function Notch({ expanded, onToggle }: NotchProps) {
         ) : (
           <div className="notch-lyrics">{lyricsText}</div>
         )}
+        {hasSynced && (
+          <span ref={lineMeasureRef} className="notch-line-measure" aria-hidden="true">{widestLyric}</span>
+        )}
         <div className="notch-controls">
           <button type="button" className="notch-btn" onClick={control("Previous")} disabled={playPending || !media.canPrev} aria-label="이전">
             PREV
@@ -880,8 +1238,8 @@ export function Notch({ expanded, onToggle }: NotchProps) {
           <button type="button" className="notch-btn" onClick={control("Next")} disabled={playPending || !media.canNext} aria-label="다음">
             NEXT
           </button>
-          <button type="button" className="notch-btn" onClick={(e) => { e.stopPropagation(); setInspectingMedia(false); setEditingTimer(true); }}>
-            {timerActive ? `TIMER ${timerLabel}` : "TIMER"}
+          <button type="button" className="notch-btn notch-timer-btn" onClick={(e) => { e.stopPropagation(); setInspectingMedia(false); setEditingTimer(true); }}>
+            {timerActive ? timerChip : "TIMER"}
           </button>
         </div>
           </>

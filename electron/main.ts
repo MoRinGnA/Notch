@@ -1,9 +1,10 @@
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, powerMonitor, screen, Tray } from "electron";
+import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, powerMonitor, screen, Tray } from "electron";
 import { execFile } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 
-const WINDOW_WIDTH = 520;
+// 가사 길이에 따라 노치가 넓어질 수 있도록 창을 넉넉히 둔다.
+const WINDOW_WIDTH = 900;
 const WINDOW_HEIGHT = 220;
 
 interface CpuSample {
@@ -598,6 +599,67 @@ ipcMain.on("notch:bounds", (event, bounds: { x: number; y: number; width: number
   win.setShape(shape.filter((rect) => rect.width > 0 && rect.height > 0));
 });
 
+// 펼침/접힘 전역 단축키 (Ctrl+Alt+N).
+const TOGGLE_ACCELERATOR = "CommandOrControl+Alt+N";
+
+// 앞쪽 창이 화면을 꽉 채운 전체화면인지 판정한다. 바탕화면(Progman/WorkerW)은 제외한다.
+const FULLSCREEN_SCRIPT = `
+Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public class NotchForeground {
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+  [StructLayout(LayoutKind.Sequential)] public struct MONITORINFO { public int cbSize; public RECT rcMonitor; public RECT rcWork; public uint dwFlags; }
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+  [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr hWnd, uint dwFlags);
+  [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+}
+"@
+$handle = [NotchForeground]::GetForegroundWindow()
+if ($handle -eq [IntPtr]::Zero) { Write-Output 'false'; exit 0 }
+$buffer = New-Object System.Text.StringBuilder 256
+[void][NotchForeground]::GetClassName($handle, $buffer, 256)
+$name = $buffer.ToString()
+if ($name -eq 'Progman' -or $name -eq 'WorkerW' -or $name -eq 'Shell_TrayWnd') { Write-Output 'false'; exit 0 }
+# 작업표시줄을 자동 숨김하면 최대화 창이 화면을 꽉 채운다. 이걸 전체화면으로 보면 안 된다.
+if ([NotchForeground]::IsZoomed($handle)) { Write-Output 'false'; exit 0 }
+$rect = New-Object NotchForeground+RECT
+if (-not [NotchForeground]::GetWindowRect($handle, [ref]$rect)) { Write-Output 'false'; exit 0 }
+$monitor = [NotchForeground]::MonitorFromWindow($handle, 2)
+$info = New-Object NotchForeground+MONITORINFO
+$info.cbSize = 40
+if (-not [NotchForeground]::GetMonitorInfo($monitor, [ref]$info)) { Write-Output 'false'; exit 0 }
+$full = ($rect.Left -le $info.rcMonitor.Left) -and ($rect.Top -le $info.rcMonitor.Top) -and ($rect.Right -ge $info.rcMonitor.Right) -and ($rect.Bottom -ge $info.rcMonitor.Bottom)
+if ($full) { Write-Output 'true' } else { Write-Output 'false' }
+`;
+
+let notchWindow: BrowserWindow | null = null;
+let fullscreenTimer: NodeJS.Timeout | null = null;
+
+// 전체화면 앱이 앞에 있으면 노치를 숨기고, 빠지면 조용히 되살린다.
+function watchFullscreen(win: BrowserWindow): void {
+  const check = async () => {
+    if (win.isDestroyed()) return;
+    try {
+      const fullscreen = (await runPowerShell(FULLSCREEN_SCRIPT)).trim() === "true";
+      if (fullscreen && win.isVisible()) win.hide();
+      else if (!fullscreen && !win.isVisible()) win.showInactive();
+    } catch {
+      // 판정에 실패하면 현재 표시 상태를 그대로 둔다.
+    }
+  };
+  fullscreenTimer = setInterval(() => { void check(); }, 3000);
+  win.on("closed", () => {
+    if (fullscreenTimer) clearInterval(fullscreenTimer);
+    fullscreenTimer = null;
+    notchWindow = null;
+  });
+}
+
 function createWindow(): void {
   const { workArea } = screen.getPrimaryDisplay();
 
@@ -621,6 +683,8 @@ function createWindow(): void {
   });
 
   win.setAlwaysOnTop(true, "screen-saver");
+  notchWindow = win;
+  watchFullscreen(win);
 
   const devUrl = process.env.VITE_DEV_SERVER_URL;
   if (devUrl) {
@@ -643,9 +707,18 @@ app.whenReady().then(() => {
   createTray();
   createWindow();
 
+  const registered = globalShortcut.register(TOGGLE_ACCELERATOR, () => {
+    notchWindow?.webContents.send("notch:toggle");
+  });
+  if (!registered) console.warn("전역 단축키를 등록하지 못했습니다:", TOGGLE_ACCELERATOR);
+
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+});
+
+app.on("will-quit", () => {
+  globalShortcut.unregisterAll();
 });
 
 app.on("window-all-closed", () => {

@@ -31,6 +31,7 @@ interface Window {
     getGpu: () => Promise<number | null>;
     getBattery: () => Promise<NotchBattery>;
     onPowerChange: (callback: (onBattery: boolean) => void) => () => void;
+    onToggle: (callback: () => void) => () => void;
     getMedia: () => Promise<NotchMedia>;
     getYoutubeThumb: (track: string, artist: string) => Promise<string>;
     getWeather: () => Promise<{ tempC: number; kind: string; city: string } | null>;

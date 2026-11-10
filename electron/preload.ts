@@ -7,6 +7,11 @@ contextBridge.exposeInMainWorld("notchApi", {
   getGpu: () => ipcRenderer.invoke("notch:gpu") as Promise<number | null>,
   getMedia: () => ipcRenderer.invoke("notch:media"),
   getBattery: () => ipcRenderer.invoke("notch:battery") as Promise<{ hasBattery: boolean; percent: number; charging: boolean }>,
+  onToggle: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on("notch:toggle", listener);
+    return () => ipcRenderer.removeListener("notch:toggle", listener);
+  },
   onPowerChange: (callback: (onBattery: boolean) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, onBattery: boolean) => callback(onBattery);
     ipcRenderer.on("notch:power-change", listener);
