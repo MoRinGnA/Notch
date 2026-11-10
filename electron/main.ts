@@ -1,43 +1,68 @@
 import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, powerMonitor, screen, Tray } from "electron";
-import { execFile } from "node:child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 // 가사 길이에 따라 노치가 넓어질 수 있도록 창을 넉넉히 둔다.
 const WINDOW_WIDTH = 900;
-// 펼친 화면이 내비게이션과 메모 편집기를 담을 만큼 세로로 길다.
+// 펼친 미디어/HUD 패널에 필요한 세로 크기.
 const WINDOW_HEIGHT = 340;
 
-interface CpuSample {
-  idle: number;
-  total: number;
+// CPU 온도는 LibreHardwareMonitor/OpenHardwareMonitor가 실행 중이면 그 CPU 센서를 먼저 쓰고,
+// 없으면 Windows 열 구역(thermal zone) 중 가장 높은 값을 쓴다. 없으면 null.
+const TEMP_SCRIPT = `
+$ErrorActionPreference = 'SilentlyContinue'
+function Read-Sensor($ns) {
+  try {
+    $sensors = @(Get-CimInstance -Namespace $ns -ClassName Sensor -ErrorAction Stop | Where-Object { $_.SensorType -eq 'Temperature' -and $_.Value -gt 0 })
+    if ($sensors.Count -eq 0) { return $null }
+    $cpu = $sensors | Where-Object { $_.Name -match 'CPU Package|Package|Tctl|Tdie|CPU' } | Sort-Object Value -Descending | Select-Object -First 1
+    if ($cpu) { return [double]$cpu.Value }
+    return [double](($sensors | Measure-Object -Property Value -Maximum).Maximum)
+  } catch { return $null }
 }
+$value = Read-Sensor 'root/LibreHardwareMonitor'
+if ($null -eq $value) { $value = Read-Sensor 'root/OpenHardwareMonitor' }
+if ($null -eq $value) {
+  $zones = @(Get-CimInstance -ClassName Win32_PerfFormattedData_Counters_ThermalZoneInformation -ErrorAction SilentlyContinue)
+  $temps = @($zones | ForEach-Object { ([double]$_.HighPrecisionTemperature / 10) - 273.15 } | Where-Object { $_ -ge 15 -and $_ -le 115 })
+  if ($temps.Count -gt 0) { $value = ($temps | Measure-Object -Maximum).Maximum }
+}
+if ($null -eq $value) { 'null' } else { [Math]::Round($value, 1).ToString([System.Globalization.CultureInfo]::InvariantCulture) }
+`;
 
-function sampleCpu(): CpuSample {
-  let idle = 0;
-  let total = 0;
-  for (const cpu of os.cpus()) {
-    const t = cpu.times;
-    idle += t.idle;
-    total += t.user + t.nice + t.sys + t.idle + t.irq;
+// HUD가 5초 간격으로 물어보므로 짧게 캐시해 PowerShell을 덜 띄운다.
+let tempCache: { at: number; ttl: number; value: number | null } | null = null;
+
+ipcMain.handle("notch:temp", async (): Promise<number | null> => {
+  if (process.platform !== "win32") return null;
+  const now = Date.now();
+  if (tempCache && now - tempCache.at < tempCache.ttl) return tempCache.value;
+  try {
+    const value = Number.parseFloat((await runPowerShell(TEMP_SCRIPT)).trim());
+    const result = Number.isFinite(value) && value > 0 && value < 150 ? value : null;
+    // 센서가 없는 PC에서는 매번 PowerShell을 띄우지 않도록 실패를 더 오래 기억한다.
+    tempCache = { at: now, ttl: result === null ? 60000 : 3000, value: result };
+    return result;
+  } catch {
+    tempCache = { at: now, ttl: 60000, value: null };
+    return null;
   }
-  return { idle, total };
-}
-
-let lastCpu = sampleCpu();
-
-ipcMain.handle("notch:stats", () => {
-  const now = sampleCpu();
-  const dIdle = now.idle - lastCpu.idle;
-  const dTotal = now.total - lastCpu.total;
-  lastCpu = now;
-  const cpu = dTotal > 0 ? (1 - dIdle / dTotal) * 100 : 0;
-  return { cpu };
 });
+
+// NOW 화면에서 고를 수 있는 재생 세션 하나.
+interface MediaSource {
+  id: string;
+  app: string;
+  title: string;
+  artist: string;
+  status: string;
+}
 
 interface MediaInfo {
   active: boolean;
+  id: string;
+  sources: MediaSource[];
   status: string;
   title: string;
   artist: string;
@@ -54,6 +79,8 @@ interface MediaInfo {
 
 const EMPTY_MEDIA: MediaInfo = {
   active: false,
+  id: "",
+  sources: [],
   status: "",
   title: "",
   artist: "",
@@ -261,6 +288,281 @@ ipcMain.handle("notch:battery", async (): Promise<BatteryInfo> => {
   };
 });
 
+interface VolumeState {
+  level: number;
+  muted: boolean;
+}
+
+// 시스템 기본 출력의 마스터 볼륨. Windows Core Audio(IAudioEndpointVolume)를 C#으로 감싼다.
+// Add-Type 컴파일이 무거워 호출마다 PowerShell을 새로 띄우면 슬라이더가 끊기므로,
+// 한 프로세스를 띄워 두고 stdin/stdout으로 get/set 명령만 주고받는다.
+const VOLUME_AGENT_SCRIPT = `
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+namespace NotchAudio {
+  [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
+  internal class MMDeviceEnumerator { }
+
+  [ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  internal interface IMMDeviceEnumerator {
+    [PreserveSig] int EnumAudioEndpoints(int dataFlow, int stateMask, out IntPtr devices);
+    [PreserveSig] int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice device);
+  }
+
+  [ComImport, Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  internal interface IMMDevice {
+    [PreserveSig] int Activate(ref Guid iid, int clsCtx, IntPtr activationParams, [MarshalAs(UnmanagedType.IUnknown)] out object instance);
+  }
+
+  // 메서드는 vtable 순서대로 선언해야 한다. 쓰지 않는 채널 관련 항목도 자리를 채운다.
+  [ComImport, Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  internal interface IAudioEndpointVolume {
+    [PreserveSig] int RegisterControlChangeNotify(IntPtr notify);
+    [PreserveSig] int UnregisterControlChangeNotify(IntPtr notify);
+    [PreserveSig] int GetChannelCount(out uint count);
+    [PreserveSig] int SetMasterVolumeLevel(float levelDb, Guid context);
+    [PreserveSig] int SetMasterVolumeLevelScalar(float level, Guid context);
+    [PreserveSig] int GetMasterVolumeLevel(out float levelDb);
+    [PreserveSig] int GetMasterVolumeLevelScalar(out float level);
+    [PreserveSig] int SetChannelVolumeLevel(uint channel, float levelDb, Guid context);
+    [PreserveSig] int SetChannelVolumeLevelScalar(uint channel, float level, Guid context);
+    [PreserveSig] int GetChannelVolumeLevel(uint channel, out float levelDb);
+    [PreserveSig] int GetChannelVolumeLevelScalar(uint channel, out float level);
+    [PreserveSig] int SetMute([MarshalAs(UnmanagedType.Bool)] bool mute, Guid context);
+    [PreserveSig] int GetMute([MarshalAs(UnmanagedType.Bool)] out bool mute);
+  }
+
+  public static class Master {
+    // 짧은 시간 동안은 기본 출력 객체를 재사용한다(초당 여러 번 읽어도 부담이 없게).
+    private static IAudioEndpointVolume cached;
+    private static DateTime cachedAt = DateTime.MinValue;
+
+    private static void Forget() {
+      cached = null;
+      cachedAt = DateTime.MinValue;
+    }
+
+    private static IAudioEndpointVolume Endpoint() {
+      if (cached != null && (DateTime.UtcNow - cachedAt).TotalSeconds < 5) return cached;
+      var enumerator = (IMMDeviceEnumerator)new MMDeviceEnumerator();
+      IMMDevice device;
+      Marshal.ThrowExceptionForHR(enumerator.GetDefaultAudioEndpoint(0, 1, out device));
+      var iid = typeof(IAudioEndpointVolume).GUID;
+      object instance;
+      Marshal.ThrowExceptionForHR(device.Activate(ref iid, 23, IntPtr.Zero, out instance));
+      cached = (IAudioEndpointVolume)instance;
+      cachedAt = DateTime.UtcNow;
+      return cached;
+    }
+
+    // "레벨;음소거" 한 줄로 답한다(따옴표 이스케이프를 피하려고 JSON 대신 쓴다).
+    public static string Read() {
+      try {
+        var endpoint = Endpoint();
+        float level;
+        bool muted;
+        Marshal.ThrowExceptionForHR(endpoint.GetMasterVolumeLevelScalar(out level));
+        Marshal.ThrowExceptionForHR(endpoint.GetMute(out muted));
+        var percent = (int)Math.Round(Math.Max(0f, Math.Min(1f, level)) * 100f);
+        return percent.ToString() + ";" + (muted ? "1" : "0");
+      } catch {
+        // 출력 기기가 바뀌었으면 다음 호출에서 새 기본 기기를 찾는다.
+        Forget();
+        throw;
+      }
+    }
+
+    public static void Set(int percent) {
+      try {
+        var endpoint = Endpoint();
+        var level = Math.Max(0, Math.Min(100, percent)) / 100f;
+        Marshal.ThrowExceptionForHR(endpoint.SetMasterVolumeLevelScalar(level, Guid.Empty));
+      } catch {
+        Forget();
+        throw;
+      }
+    }
+
+    public static void SetMute(bool muted) {
+      try {
+        var endpoint = Endpoint();
+        Marshal.ThrowExceptionForHR(endpoint.SetMute(muted, Guid.Empty));
+      } catch {
+        Forget();
+        throw;
+      }
+    }
+  }
+}
+'@
+while ($true) {
+  $line = [Console]::In.ReadLine()
+  if ($null -eq $line) { break }
+  $parts = @($line.Trim() -split '\\s+')
+  $reply = 'err'
+  try {
+    if ($parts[0] -eq 'get') { $reply = [NotchAudio.Master]::Read() }
+    elseif ($parts[0] -eq 'set' -and $parts.Count -ge 2) { [NotchAudio.Master]::Set([int]$parts[1]); $reply = 'ok' }
+    elseif ($parts[0] -eq 'mute' -and $parts.Count -ge 2) { [NotchAudio.Master]::SetMute($parts[1] -eq '1'); $reply = 'ok' }
+    elseif ($parts[0] -eq 'quit') { [Console]::Out.WriteLine('bye'); [Console]::Out.Flush(); break }
+  } catch { $reply = 'err' }
+  [Console]::Out.WriteLine($reply)
+  [Console]::Out.Flush()
+}
+`;
+
+interface VolumeRequest {
+  done: boolean;
+  timer: NodeJS.Timeout;
+  finish: (error: Error | null, value: string) => void;
+}
+
+let volumeProc: ChildProcessWithoutNullStreams | null = null;
+let volumeBuffer = "";
+let volumeRequests: VolumeRequest[] = [];
+let volumeIdleTimer: NodeJS.Timeout | null = null;
+
+function settleVolumeRequests(error: Error): void {
+  const pending = volumeRequests;
+  volumeRequests = [];
+  for (const request of pending) {
+    if (request.done) continue;
+    request.done = true;
+    clearTimeout(request.timer);
+    request.finish(error, "");
+  }
+}
+
+// 대화가 끊기면 대기 중인 요청을 모두 실패로 정리하고, 다음 호출에서 새로 띄운다.
+function resetVolumeAgent(error: Error): void {
+  const proc = volumeProc;
+  volumeProc = null;
+  volumeBuffer = "";
+  if (proc) {
+    proc.removeAllListeners();
+    proc.stdin.destroy();
+    proc.kill();
+  }
+  settleVolumeRequests(error);
+}
+
+function stopVolumeAgent(): void {
+  if (volumeIdleTimer) {
+    clearTimeout(volumeIdleTimer);
+    volumeIdleTimer = null;
+  }
+  volumeProc = null;
+  volumeBuffer = "";
+  settleVolumeRequests(new Error("volume agent stopped"));
+}
+
+// 노치를 닫고 한동안 볼륨을 만지지 않으면 PowerShell을 정리한다.
+function touchVolumeIdle(): void {
+  if (volumeIdleTimer) clearTimeout(volumeIdleTimer);
+  volumeIdleTimer = setTimeout(() => {
+    volumeIdleTimer = null;
+    if (volumeRequests.length > 0) {
+      touchVolumeIdle();
+      return;
+    }
+    stopVolumeAgent();
+  }, 60000);
+}
+
+function spawnVolumeAgent(): void {
+  const encoded = Buffer.from(VOLUME_AGENT_SCRIPT, "utf16le").toString("base64");
+  const proc = spawn(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded],
+    { windowsHide: true, stdio: "pipe" },
+  );
+  volumeProc = proc;
+  volumeBuffer = "";
+  proc.stdout.setEncoding("utf8");
+  proc.stdout.on("data", (chunk: string) => {
+    volumeBuffer += chunk;
+    let index = volumeBuffer.indexOf("\n");
+    while (index >= 0) {
+      const line = volumeBuffer.slice(0, index).trim();
+      volumeBuffer = volumeBuffer.slice(index + 1);
+      const request = volumeRequests.shift();
+      if (request && !request.done) {
+        request.done = true;
+        clearTimeout(request.timer);
+        request.finish(null, line);
+      }
+      index = volumeBuffer.indexOf("\n");
+    }
+    touchVolumeIdle();
+  });
+  proc.on("error", (error) => {
+    if (volumeProc === proc) resetVolumeAgent(error as Error);
+  });
+  proc.on("exit", (code) => {
+    if (volumeProc !== proc) return;
+    volumeProc = null;
+    volumeBuffer = "";
+    settleVolumeRequests(new Error(`volume agent exited (${code})`));
+  });
+  touchVolumeIdle();
+}
+
+function volumeCommand(command: string): Promise<string> {
+  if (process.platform !== "win32") return Promise.reject(new Error("unsupported platform"));
+  if (!volumeProc) spawnVolumeAgent();
+  const proc = volumeProc;
+  if (!proc) return Promise.reject(new Error("volume agent unavailable"));
+  return new Promise((resolve, reject) => {
+    const request: VolumeRequest = {
+      done: false,
+      // 첫 호출은 Add-Type 컴파일 때문에 느리다.
+      timer: setTimeout(() => {
+        if (request.done) return;
+        request.done = true;
+        // 응답을 놓치면 이후 응답이 한 칸씩 밀리므로 대화를 새로 시작한다.
+        resetVolumeAgent(new Error("volume agent timeout"));
+        reject(new Error("volume agent timeout"));
+      }, 5000),
+      finish: (error, value) => (error ? reject(error) : resolve(value)),
+    };
+    volumeRequests.push(request);
+    proc.stdin.write(`${command}\n`);
+  });
+}
+
+ipcMain.handle("notch:volume", async (): Promise<VolumeState | null> => {
+  if (process.platform !== "win32") return null;
+  try {
+    const [level, muted] = (await volumeCommand("get")).split(";");
+    const parsed = Number.parseInt(level, 10);
+    if (!Number.isFinite(parsed)) return null;
+    return { level: Math.max(0, Math.min(100, parsed)), muted: muted === "1" };
+  } catch {
+    return null;
+  }
+});
+
+ipcMain.handle("notch:volume-set", async (_event, level: unknown): Promise<boolean> => {
+  if (typeof level !== "number" || !Number.isFinite(level)) return false;
+  const clamped = Math.max(0, Math.min(100, Math.round(level)));
+  try {
+    return (await volumeCommand(`set ${clamped}`)) === "ok";
+  } catch {
+    return false;
+  }
+});
+
+ipcMain.handle("notch:volume-mute", async (_event, muted: unknown): Promise<boolean> => {
+  if (typeof muted !== "boolean") return false;
+  try {
+    return (await volumeCommand(`mute ${muted ? 1 : 0}`)) === "ok";
+  } catch {
+    return false;
+  }
+});
+
 interface MediaSessionRow {
   app: string;
   status: string;
@@ -282,6 +584,8 @@ function isBrowserApp(appId: string): boolean {
 
 // 같은 브라우저에 여러 세션이 있어도 표시된 앱과 제목을 함께 기억한다.
 let lastShownSession = "";
+// 사용자가 NOW에서 직접 고른 세션. 사라질 때까지 자동 선택보다 우선한다.
+let userPickedSession = "";
 let lastShownMedia: MediaInfo | null = null;
 let mediaReadId = 0;
 const sessionKey = (row: MediaSessionRow) => JSON.stringify([row.app, row.title]);
@@ -304,7 +608,16 @@ function isFreshPlaying(row: MediaSessionRow): boolean {
 }
 
 function pickSession(rows: MediaSessionRow[]): MediaSessionRow | undefined {
-  if (rows.length === 0) return undefined;
+  if (rows.length === 0) {
+    userPickedSession = "";
+    return undefined;
+  }
+  // 직접 고른 세션이 아직 살아 있으면 재생 상태와 관계없이 그대로 보여준다.
+  if (userPickedSession) {
+    const picked = rows.find((row) => sessionKey(row) === userPickedSession);
+    if (picked) return picked;
+    userPickedSession = "";
+  }
   const byRecent = [...rows].sort((a, b) => b.updatedAt - a.updatedAt);
   const freshPlaying = byRecent.filter(isFreshPlaying);
   const preferred = lastShownSession ? rows.find((r) => sessionKey(r) === lastShownSession) : undefined;
@@ -380,7 +693,11 @@ ipcMain.handle("notch:media", async (): Promise<MediaInfo> => {
     } catch {
       thumbnail = "";
     }
-    const media = { ...EMPTY_MEDIA, ...pick, active: true, thumbnail };
+    // 재생 중인 세션을 앞에 두되, 같은 앱의 여러 탭도 각각 고를 수 있게 제목까지 담는다.
+    const sources: MediaSource[] = [...rows]
+      .sort((a, b) => Number(b.status === "Playing") - Number(a.status === "Playing") || b.updatedAt - a.updatedAt)
+      .map((row) => ({ id: sessionKey(row), app: row.app, title: row.title, artist: row.artist, status: row.status }));
+    const media = { ...EMPTY_MEDIA, ...pick, id: sessionKey(pick), active: true, thumbnail, sources };
     if (readId !== mediaReadId) return lastShownMedia ?? media;
     lastShownSession = sessionKey(pick);
     lastShownMedia = media;
@@ -549,6 +866,13 @@ ipcMain.handle("notch:media-control", async (_event, target: MediaTarget): Promi
   }
 });
 
+// NOW 화면에서 다른 재생 세션을 직접 고른다. 다음 미디어 조회부터 그 세션이 우선한다.
+ipcMain.handle("notch:media-select", (_event, id: string): boolean => {
+  if (typeof id !== "string" || !id || id.length > 400) return false;
+  userPickedSession = id;
+  return true;
+});
+
 // 트레이 객체는 앱이 실행되는 동안 유지해야 아이콘이 사라지지 않는다.
 let tray: Tray | null = null;
 
@@ -585,18 +909,8 @@ const SHORTCUT_CHOICES = [
   { label: "Ctrl+Alt+Shift+N", accelerator: "CommandOrControl+Alt+Shift+N" },
 ];
 
-// 트레이에서 바로 새 메모를 열면 노치를 펼친 채로 메모 화면을 띄운다.
-function openNewNote(): void {
-  const win = notchWindow;
-  if (!win || win.isDestroyed()) return;
-  if (!win.isVisible()) win.showInactive();
-  win.webContents.send("notch:new-note");
-}
-
 function buildTrayMenu(): Menu {
   return Menu.buildFromTemplate([
-    { label: "새 메모", click: () => openNewNote() },
-    { type: "separator" },
     {
       label: "마우스 올리면 펼치기",
       type: "checkbox",
@@ -749,94 +1063,6 @@ function saveSettings(patch: Partial<NotchSettings>): void {
   applySettings();
 }
 
-interface Note {
-  id: string;
-  text: string;
-  createdAt: number;
-  updatedAt: number;
-}
-
-interface NotesData {
-  pinnedId: string | null;
-  notes: Note[];
-}
-
-// 메모는 설정과 같은 사용자 폴더의 notes.json 한 파일에 모아 둔다.
-const notesFile = (): string => path.join(app.getPath("appData"), "Notch", "notes.json");
-let notesData: NotesData | null = null;
-
-function readNotes(): NotesData {
-  if (notesData) return notesData;
-  try {
-    const raw = JSON.parse(fs.readFileSync(notesFile(), "utf8")) as Partial<NotesData>;
-    const notes = Array.isArray(raw.notes)
-      ? raw.notes
-          .filter((note) => note && typeof note.id === "string" && typeof note.text === "string")
-          .map((note) => ({
-            id: note.id,
-            text: note.text.slice(0, 20000),
-            createdAt: Number.isFinite(note.createdAt) ? note.createdAt : Date.now(),
-            updatedAt: Number.isFinite(note.updatedAt) ? note.updatedAt : Date.now(),
-          }))
-      : [];
-    notesData = { pinnedId: typeof raw.pinnedId === "string" ? raw.pinnedId : null, notes };
-  } catch {
-    notesData = { pinnedId: null, notes: [] };
-  }
-  return notesData;
-}
-
-function writeNotes(next: NotesData): void {
-  notesData = next;
-  writeJsonFile(notesFile(), next, "메모를 저장하지 못했습니다:");
-}
-
-// 최근에 고친 메모가 앞에 온다.
-const sortedNotes = (data: NotesData): NotesData => ({
-  ...data,
-  notes: [...data.notes].sort((a, b) => b.updatedAt - a.updatedAt),
-});
-
-ipcMain.handle("notch:notes", (): NotesData => sortedNotes(readNotes()));
-
-ipcMain.handle("notch:note-save", (_event, input: { id: string | null; text: string }): Note | null => {
-  const data = readNotes();
-  const text = (input?.text ?? "").slice(0, 20000);
-  const now = Date.now();
-  if (input?.id) {
-    const existing = data.notes.find((note) => note.id === input.id);
-    if (!existing) return null;
-    const updated = { ...existing, text, updatedAt: now };
-    writeNotes({ ...data, notes: data.notes.map((note) => (note.id === existing.id ? updated : note)) });
-    return updated;
-  }
-  const note: Note = {
-    id: `${now.toString(36)}${Math.random().toString(36).slice(2, 6)}`,
-    text,
-    createdAt: now,
-    updatedAt: now,
-  };
-  writeNotes({ ...data, notes: [...data.notes, note] });
-  return note;
-});
-
-// 고정은 한 메모만 허용하고, 같은 메모를 다시 누르면 해제된다.
-ipcMain.handle("notch:note-pin", (_event, id: string | null): NotesData => {
-  const data = readNotes();
-  const pinnedId = id && data.notes.some((note) => note.id === id) ? id : null;
-  writeNotes({ ...data, pinnedId });
-  return sortedNotes(readNotes());
-});
-
-ipcMain.handle("notch:note-delete", (_event, id: string): NotesData => {
-  const data = readNotes();
-  writeNotes({
-    pinnedId: data.pinnedId === id ? null : data.pinnedId,
-    notes: data.notes.filter((note) => note.id !== id),
-  });
-  return sortedNotes(readNotes());
-});
-
 // 앞쪽 창이 화면을 꽉 채운 전체화면인지 판정한다. 바탕화면(Progman/WorkerW)은 제외한다.
 const FULLSCREEN_SCRIPT = `
 Add-Type @"
@@ -940,7 +1166,7 @@ function createWindow(): void {
   }
 }
 
-// 창을 두 개 띄우면 서로 같은 notes.json·settings.json을 덮어쓰므로 한 번에 하나만 실행한다.
+// 창을 두 개 띄우면 설정 파일을 서로 덮어쓰므로 한 번에 하나만 실행한다.
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -958,8 +1184,12 @@ if (!app.requestSingleInstanceLock()) {
     };
     powerMonitor.on("on-ac", () => notifyPowerChange(false));
     powerMonitor.on("on-battery", () => notifyPowerChange(true));
-    powerMonitor.on("resume", () => notifyPowerChange(powerMonitor.isOnBatteryPower()));
+    powerMonitor.on("resume", () => {
+      notifyPowerChange(powerMonitor.isOnBatteryPower());
+    });
 
+    // Windows에서 노치의 작업표시줄 앱 ID를 Notch로 고정한다.
+    app.setAppUserModelId("com.notch.app");
     createTray();
     createWindow();
     applySettings();
@@ -974,6 +1204,11 @@ if (!app.requestSingleInstanceLock()) {
 
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
+  if (volumeProc) {
+    volumeProc.stdin.end();
+    volumeProc.kill();
+    volumeProc = null;
+  }
 });
 
 app.on("window-all-closed", () => {

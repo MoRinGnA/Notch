@@ -1,9 +1,15 @@
-interface NotchStats {
-  cpu: number;
+interface NotchMediaSource {
+  id: string;
+  app: string;
+  title: string;
+  artist: string;
+  status: string;
 }
 
 interface NotchMedia {
   active: boolean;
+  id: string;
+  sources: NotchMediaSource[];
   status: string;
   title: string;
   artist: string;
@@ -24,16 +30,9 @@ interface NotchBattery {
   charging: boolean;
 }
 
-interface NotchNote {
-  id: string;
-  text: string;
-  createdAt: number;
-  updatedAt: number;
-}
-
-interface NotchNotesData {
-  pinnedId: string | null;
-  notes: NotchNote[];
+interface NotchVolume {
+  level: number;
+  muted: boolean;
 }
 
 interface NotchSettings {
@@ -47,7 +46,7 @@ interface Window {
     setNotchBounds: (bounds: { x: number; y: number; width: number; height: number }) => void;
     getSettings: () => Promise<NotchSettings>;
     onSettings: (callback: (settings: NotchSettings) => void) => () => void;
-    getStats: () => Promise<NotchStats>;
+    getTemp: () => Promise<number | null>;
     getGpu: () => Promise<number | null>;
     getBattery: () => Promise<NotchBattery>;
     onPowerChange: (callback: (onBattery: boolean) => void) => () => void;
@@ -56,10 +55,9 @@ interface Window {
     getYoutubeThumb: (track: string, artist: string) => Promise<string>;
     getWeather: () => Promise<{ tempC: number; kind: string; city: string } | null>;
     controlMedia: (action: "Play" | "Pause" | "Previous" | "Next", target?: { app?: string; title?: string }) => Promise<boolean>;
-    getNotes: () => Promise<NotchNotesData>;
-    saveNote: (note: { id: string | null; text: string }) => Promise<NotchNote | null>;
-    pinNote: (id: string | null) => Promise<NotchNotesData>;
-    deleteNote: (id: string) => Promise<NotchNotesData>;
-    onNewNote: (callback: () => void) => () => void;
+    selectMedia: (id: string) => Promise<boolean>;
+    getVolume: () => Promise<NotchVolume | null>;
+    setVolume: (level: number) => Promise<boolean>;
+    setMuted: (muted: boolean) => Promise<boolean>;
   };
 }

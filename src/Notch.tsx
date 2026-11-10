@@ -1,4 +1,12 @@
-import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type MouseEvent,
+  type PointerEvent,
+} from "react";
 
 interface NotchProps {
   expanded: boolean;
@@ -24,7 +32,7 @@ interface Lyrics {
 
 const MEDIA_POLL_MS = 2000;
 const BATTERY_POLL_MS = 30000;
-// 펼친 화면의 기본 폭(내비게이션 + 작업 영역).
+// 펼친 화면의 기본 폭(HUD 또는 미디어 패널).
 const EXPANDED_WIDTH = 600;
 
 const LYRICS_GAP_MS = 300;
@@ -32,6 +40,8 @@ const LYRICS_CACHE_LIMIT = 50;
 
 const EMPTY_MEDIA: NotchMedia = {
   active: false,
+  id: "",
+  sources: [],
   status: "",
   title: "",
   artist: "",
@@ -48,80 +58,10 @@ const EMPTY_MEDIA: NotchMedia = {
 
 const PROGRESS_TICK_MS = 250;
 
-type TimerMode = "timer" | "stopwatch" | "pomodoro";
-type PomodoroPhase = "focus" | "break";
+type NotchView = "media" | "hud";
 
-const POMODORO_FOCUS_MS = 25 * 60 * 1000;
-const POMODORO_BREAK_MS = 5 * 60 * 1000;
-
-// 스톱워치는 endsAt을 시작 시각으로 써서 경과 시간을 재고, 나머지는 종료 시각까지 남은 시간을 쓴다.
-type TimerState =
-  | { status: "idle" }
-  | { status: "running"; mode: TimerMode; phase: PomodoroPhase; round: number; endsAt: number }
-  | { status: "paused"; mode: TimerMode; phase: PomodoroPhase; round: number; remainingMs: number }
-  | { status: "done"; mode: TimerMode; phase: PomodoroPhase; round: number };
-
-type NotchView = "done" | "media" | "timer" | "hud" | "notes";
-// 펼친 화면 왼쪽 내비게이션에서 고르는 영역.
-type NotchNav = "now" | "timer" | "notes";
-
-// 완료 알림은 항상 우선하고, 그 아래는 사용자가 고른 영역을 따른다.
-function resolveView(timer: TimerState, hasMedia: boolean, playing: boolean, nav: NotchNav): NotchView {
-  if (timer.status === "done") return "done";
-  if (nav === "notes") return "notes";
-  if (nav === "timer") return "timer";
-  if (hasMedia && playing) return "media";
-  if (timer.status !== "idle") return "timer";
+function resolveView(hasMedia: boolean): NotchView {
   return hasMedia ? "media" : "hud";
-}
-
-// 메모 목록의 시각 표시. 오늘은 시:분, 지난 메모는 월.일.
-function noteStamp(ms: number): string {
-  const date = new Date(ms);
-  const pad = (value: number) => String(value).padStart(2, "0");
-  const today = new Date().toDateString() === date.toDateString();
-  return today ? `${pad(date.getHours())}:${pad(date.getMinutes())}` : `${pad(date.getMonth() + 1)}.${pad(date.getDate())}`;
-}
-
-function notePreview(text: string): string {
-  const line = text.split("\n").find((row) => row.trim()) ?? "";
-  return line.trim().slice(0, 42) || "빈 메모";
-}
-
-// 스톱워치는 지난 시간, 나머지는 남은 시간.
-function timerSpan(timer: TimerState, now: number): number {
-  if (timer.status === "running") {
-    return timer.mode === "stopwatch" ? Math.max(0, now - timer.endsAt) : Math.max(0, timer.endsAt - now);
-  }
-  if (timer.status === "paused") return Math.max(0, timer.remainingMs);
-  return 0;
-}
-
-function timerTag(timer: TimerState): string {
-  if (timer.status !== "idle" && timer.mode === "pomodoro") return timer.phase === "focus" ? "FOCUS" : "BREAK";
-  if (timer.status !== "idle" && timer.mode === "stopwatch") return "STOP";
-  return "TIMER";
-}
-
-function timerChipLabel(timer: TimerState, clock: string): string {
-  return `${timer.status === "paused" ? "Ⅱ " : ""}${timerTag(timer)} ${clock}`;
-}
-
-function timerDoneCaption(timer: TimerState): string {
-  if (timer.status === "done" && timer.mode === "pomodoro") {
-    return timer.phase === "focus"
-      ? "Focus complete. Take a 5-minute break."
-      : "Break complete. Ready for the next focus session?";
-  }
-  return "Time is up.";
-}
-
-function timerClock(ms: number): string {
-  const seconds = Math.max(0, Math.ceil(ms / 1000));
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const rest = String(seconds % 60).padStart(2, "0");
-  return hours ? `${hours}:${String(minutes).padStart(2, "0")}:${rest}` : `${minutes}:${rest}`;
 }
 
 // 9x9 도트 날씨 아이콘. 1칸 = 1픽셀, 흑백으로만 그린다.
@@ -245,6 +185,21 @@ function titleArtist(title: string): string {
   const quoted = title.match(/^(.*?)["'‘’“”][^"'‘’“”]+["'‘’“”]/);
   if (!quoted) return "";
   return quoted[1].replace(/[\s\-–—:]+$/, "").trim();
+}
+
+// NOW 화면의 소스 버튼에 쓸 짧은 앱 이름. AUMID 꼬리와 .exe를 떼고 알아보기 쉬운 이름으로 바꾼다.
+const MEDIA_APP_NAMES: Record<string, string> = {
+  chrome: "CHROME", msedge: "EDGE", whale: "WHALE", firefox: "FIREFOX", brave: "BRAVE",
+  opera: "OPERA", vivaldi: "VIVALDI", chromium: "CHROMIUM", arc: "ARC", spotify: "SPOTIFY",
+};
+function mediaAppName(app: string): string {
+  const target = app.includes("!") ? app.split("!").pop() ?? app : app;
+  const file = target.split(/[\\/]/).pop() ?? target;
+  let base = file.replace(/\.exe$/i, "");
+  // com.example.app 같은 AUMID는 마지막 조각이 알아보기 쉽다.
+  if (!/[\\/]/.test(app) && base.includes(".")) base = base.split(".").pop() ?? base;
+  const key = base.toLowerCase();
+  return (MEDIA_APP_NAMES[key] ?? base.toUpperCase()).slice(0, 18);
 }
 
 // YouTube 업로더(레이블·방송 채널)는 가수가 아니므로 아티스트로 쓰지 않는다.
@@ -534,6 +489,252 @@ function extractMediaAccent(image: HTMLImageElement): string {
   }
 }
 
+// 미디어 키·다른 앱의 볼륨 변경도 놓치지 않을 만큼 짧게 확인한다.
+const VOLUME_POLL_MS = 300;
+// 10%마다 눈금을 세우고, 50%마다 길게 세워 값을 눈으로 어림하기 쉽게 한다.
+const VOLUME_TICKS = Array.from({ length: 11 }, (_, index) => index * 10);
+
+// 시스템 마스터 볼륨. 부드러운 프로그래스 바 대신, 눈금 셀 사다리·커서·반전 플레이트로 값을 읽는 계기판.
+function VolumeDeck({ active }: { active: boolean }) {
+  const [volume, setVolume] = useState<NotchVolume | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [hover, setHover] = useState<number | null>(null);
+  const trackRef = useRef<HTMLSpanElement>(null);
+  // 끄는 동안에는 폴링 결과가 손가락 위치를 덮지 않도록 마지막 값을 여기에 둔다.
+  const volumeRef = useRef<NotchVolume | null>(null);
+  const draggingRef = useRef(false);
+  const readRef = useRef(0);
+  // 조작 직전에 시작된 조회가 돌아와 방금 바꾼 값을 되돌리지 않도록 세대 번호로 막는다.
+  const writeSeq = useRef(0);
+  const writesInFlight = useRef(0);
+  const writeTimer = useRef<number | null>(null);
+  const queuedLevel = useRef<number | null>(null);
+
+  const read = async () => {
+    const api = window.notchApi;
+    if (!api) return;
+    const request = ++readRef.current;
+    const seq = writeSeq.current;
+    try {
+      const next = await api.getVolume();
+      if (request !== readRef.current || draggingRef.current || seq !== writeSeq.current) return;
+      // 잠깐 값을 못 읽었을 때 화면을 비우지 않고 마지막 값을 유지한다.
+      if (!next) return;
+      volumeRef.current = next;
+      setVolume(next);
+    } catch {
+      // 잠깐 읽지 못하면 마지막으로 확인한 값을 그대로 둔다.
+    }
+  };
+
+  // 펼친 동안에만 읽고 쓴다. 접힌 노치가 조용히 PowerShell을 붙들고 있지 않게 한다.
+  // 미디어 키나 다른 앱이 볼륨을 바꿔도 바로 따라오도록 짧게 돈다.
+  useEffect(() => {
+    if (!active) return;
+    void read();
+    const id = window.setInterval(() => {
+      // 끄는 중이거나 시스템에 쓰는 중이면 잠시 건너뛰고, 쓰기가 끝나면 바로 다시 읽는다.
+      if (draggingRef.current || writesInFlight.current > 0 || queuedLevel.current !== null) return;
+      void read();
+    }, VOLUME_POLL_MS);
+    return () => {
+      window.clearInterval(id);
+      readRef.current++;
+    };
+  }, [active]);
+
+  // 시스템에 쓰는 동안에는 조회를 멈춘다. 늦게 도착한 옛 값이 방금 바꾼 값을 되돌리지 않게.
+  const runWrite = (task: (api: NonNullable<Window["notchApi"]>) => Promise<boolean>) => {
+    const api = window.notchApi;
+    if (!api) return;
+    writesInFlight.current++;
+    void task(api)
+      .catch(() => undefined)
+      .finally(() => {
+        writesInFlight.current--;
+        if (!writesInFlight.current && queuedLevel.current === null) void read();
+      });
+  };
+
+  useEffect(() => {
+    return () => {
+      if (writeTimer.current) window.clearTimeout(writeTimer.current);
+      const last = queuedLevel.current;
+      queuedLevel.current = null;
+      if (last !== null) void window.notchApi?.setVolume(last).catch(() => undefined);
+    };
+  }, []);
+
+  // 끄는 동안 매 픽셀마다 IPC를 보내지 않고 마지막 값만 묶어서 보낸다.
+  const sendLevel = (level: number) => {
+    queuedLevel.current = level;
+    if (writeTimer.current) return;
+    writeTimer.current = window.setTimeout(() => {
+      writeTimer.current = null;
+      const value = queuedLevel.current;
+      queuedLevel.current = null;
+      if (value === null) return;
+      runWrite((api) => api.setVolume(value));
+    }, 60);
+  };
+
+  const apply = (level: number) => {
+    const current = volumeRef.current;
+    if (!current) return;
+    writeSeq.current++;
+    const next = { level, muted: false };
+    volumeRef.current = next;
+    setVolume(next);
+    sendLevel(level);
+    // 음소거 상태에서 볼륨을 만지면 Windows처럼 소리를 되살린다.
+    if (current.muted) runWrite((api) => api.setMuted(false));
+  };
+
+  const toggleMute = () => {
+    const current = volumeRef.current;
+    if (!current) return;
+    writeSeq.current++;
+    const next = { ...current, muted: !current.muted };
+    volumeRef.current = next;
+    setVolume(next);
+    runWrite((api) => api.setMuted(next.muted));
+  };
+
+  const levelAt = (clientX: number): number => {
+    const track = trackRef.current;
+    if (!track) return 0;
+    const rect = track.getBoundingClientRect();
+    const ratio = (clientX - rect.left) / Math.max(1, rect.width);
+    return Math.round(Math.max(0, Math.min(1, ratio)) * 100);
+  };
+
+  const startDrag = (event: PointerEvent<HTMLSpanElement>) => {
+    event.stopPropagation();
+    if (!volumeRef.current) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    draggingRef.current = true;
+    setDragging(true);
+    setHover(null);
+    apply(levelAt(event.clientX));
+  };
+
+  const moveDrag = (event: PointerEvent<HTMLSpanElement>) => {
+    if (draggingRef.current) {
+      event.stopPropagation();
+      apply(levelAt(event.clientX));
+      return;
+    }
+    if (!volumeRef.current) return;
+    setHover(levelAt(event.clientX));
+  };
+
+  const endDrag = (event: PointerEvent<HTMLSpanElement>) => {
+    if (!draggingRef.current) return;
+    draggingRef.current = false;
+    setDragging(false);
+    const track = event.currentTarget;
+    if (track.hasPointerCapture(event.pointerId)) track.releasePointerCapture(event.pointerId);
+    // 묶어 보낸 값이 시스템에 닿은 뒤에 실제 값을 다시 읽어 맞춘다.
+    window.setTimeout(() => {
+      if (!draggingRef.current) void read();
+    }, 220);
+  };
+
+  const handleKey = (event: KeyboardEvent<HTMLSpanElement>) => {
+    const current = volumeRef.current;
+    if (!current) return;
+    const step = event.shiftKey ? 10 : 2;
+    if (event.key === "ArrowRight" || event.key === "ArrowUp") {
+      event.preventDefault();
+      event.stopPropagation();
+      apply(Math.min(100, current.level + step));
+    } else if (event.key === "ArrowLeft" || event.key === "ArrowDown") {
+      event.preventDefault();
+      event.stopPropagation();
+      apply(Math.max(0, current.level - step));
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      apply(0);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      apply(100);
+    } else if (event.key === "m" || event.key === "M") {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleMute();
+    }
+  };
+
+  const level = volume?.level ?? 0;
+  const muted = volume?.muted ?? false;
+  // 마우스로 훑는 동안에는 실제 값과 목표 값 사이를 미리 보여준다.
+  const preview = !dragging && hover !== null && volume !== null && hover !== level ? hover : null;
+  const readout = volume === null ? "---" : String(preview ?? level).padStart(3, "0");
+
+  return (
+    <div
+      className={`notch-vol${muted ? " is-muted" : ""}${dragging ? " is-live" : ""}${volume === null ? " is-off" : ""}`}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <span className="notch-vol-label">VOL</span>
+      <span
+        ref={trackRef}
+        className="notch-vol-track"
+        role="slider"
+        tabIndex={volume === null ? -1 : 0}
+        aria-label="시스템 볼륨"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={level}
+        aria-valuetext={volume === null ? "사용할 수 없음" : muted ? "음소거됨" : `${level}%`}
+        aria-disabled={volume === null}
+        onPointerDown={startDrag}
+        onPointerMove={moveDrag}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        onPointerLeave={() => setHover(null)}
+        onKeyDown={handleKey}
+      >
+        <span className="notch-vol-rail" aria-hidden="true" />
+        <span className="notch-vol-fill" aria-hidden="true" style={{ width: `${level}%` }} />
+        <span className="notch-vol-ticks" aria-hidden="true">
+          {VOLUME_TICKS.map((tick) => (
+            <span
+              key={tick}
+              className={`notch-vol-tick${tick % 50 === 0 ? " is-major" : ""}`}
+              style={{ left: `${tick}%` }}
+            />
+          ))}
+        </span>
+        {preview !== null && (
+          <span className="notch-vol-ghost" aria-hidden="true" style={{ left: `${preview}%` }} />
+        )}
+        {volume !== null && (
+          <span className="notch-vol-cursor" aria-hidden="true" style={{ left: `${level}%` }} />
+        )}
+      </span>
+      <span className={`notch-vol-value${muted ? " is-muted" : ""}${preview !== null ? " is-target" : ""}`}>
+        {readout}
+      </span>
+      <button
+        type="button"
+        className={`notch-vol-mute${muted ? " is-on" : ""}`}
+        aria-pressed={muted}
+        aria-label={muted ? "음소거 해제" : "음소거"}
+        title={muted ? "음소거 해제 (M)" : "음소거 (M)"}
+        disabled={volume === null}
+        onClick={(event) => {
+          event.stopPropagation();
+          toggleMute();
+        }}
+      >
+        M
+      </button>
+    </div>
+  );
+}
+
 export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchProps) {
   const notchRef = useRef<HTMLDivElement>(null);
   // 접힌 미디어 행: 곡 정보(왼쪽)와 현재 가사(오른쪽)
@@ -562,41 +763,14 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
   const [lyrics, setLyrics] = useState<Lyrics>({ state: "idle", text: "", synced: [] });
   const [now, setNow] = useState(() => Date.now());
   const [battery, setBattery] = useState<NotchBattery | null>(null);
-  const [timer, setTimer] = useState<TimerState>({ status: "idle" });
-  const [timerNow, setTimerNow] = useState(() => Date.now());
-  const [timerMinutes, setTimerMinutes] = useState("25");
-  const [timerMode, setTimerMode] = useState<TimerMode>("timer");
-  // 펼친 화면의 현재 영역. 접힘/펼침과 무관하게 유지되지만, 접으면 NOW로 돌아간다.
-  const [nav, setNav] = useState<NotchNav>("now");
-  // 메모: 고정은 한 건만, 목록은 최근 수정 순서.
-  const [notes, setNotes] = useState<NotchNote[]>([]);
-  const [pinnedNoteId, setPinnedNoteId] = useState<string | null>(null);
-  const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
-  const [noteDraft, setNoteDraft] = useState("");
-  const [noteStatus, setNoteStatus] = useState<"idle" | "editing" | "saved">("idle");
-  // 삭제는 한 번 더 확인해야 실행된다(실수로 지우는 것을 막는다).
-  const [deleteArmed, setDeleteArmed] = useState(false);
-  const noteSavedRef = useRef("");
-  const noteDraftRef = useRef("");
-  const activeNoteRef = useRef<string | null>(null);
-  // 편집기를 바꿀 때마다 올린다. 늦게 끝난 저장이 다른 메모 화면을 덮지 않게 하는 표식.
-  const noteSessionRef = useRef(0);
-  noteDraftRef.current = noteDraft;
-  activeNoteRef.current = activeNoteId;
   // 가사가 없을 때 채울 유튜브 썸네일(data URL). 없으면 빈 문자열.
   const [ytThumb, setYtThumb] = useState("");
   const mediaRef = useRef(media);
   // 이벤트 리스너가 처음 렌더링의 값을 붙들지 않도록 최신 화면 상태를 따로 둔다.
-  const expandedRef = useRef(expanded);
-  const navRef = useRef(nav);
   const mediaRequestRef = useRef(0);
-  // 트레이에서 새 메모를 열었는지: 목록에서 다른 메모를 골라 덮지 않게 한다.
-  const pendingNewNoteRef = useRef(false);
   const pendingPlayRef = useRef<PendingPlay | null>(null);
   const [playPending, setPlayPending] = useState(false);
   mediaRef.current = media;
-  expandedRef.current = expanded;
-  navRef.current = nav;
 
   // 명령 전에 시작된 조회와 늦게 도착한 응답이 새 상태를 덮지 않도록 한다.
   const readMedia = async () => {
@@ -650,162 +824,6 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
     };
   }, []);
 
-  const loadNotes = async (): Promise<NotchNotesData | null> => {
-    if (!window.notchApi) return null;
-    try {
-      const data = await window.notchApi.getNotes();
-      setNotes(data.notes);
-      setPinnedNoteId(data.pinnedId);
-      return data;
-    } catch (error) {
-      console.warn("메모 조회 실패:", error);
-      return null;
-    }
-  };
-
-  // 지금 편집 중인 내용을 저장한다. 빈 새 메모는 만들지 않는다.
-  // 저장이 끝나기 전에 다른 메모로 옮기거나 새 메모를 열 수 있으므로,
-  // 돌아온 결과는 그때도 같은 편집기를 보고 있을 때만 화면에 반영한다.
-  const flushNote = async () => {
-    const api = window.notchApi;
-    if (!api) return;
-    const session = noteSessionRef.current;
-    const text = noteDraftRef.current;
-    const id = activeNoteRef.current;
-    if (text === noteSavedRef.current) return;
-    if (!id && !text.trim()) return;
-    try {
-      const saved = await api.saveNote({ id, text });
-      if (session === noteSessionRef.current) {
-        noteSavedRef.current = text;
-        if (saved) {
-          if (!id) {
-            activeNoteRef.current = saved.id;
-            setActiveNoteId(saved.id);
-          }
-          if (noteDraftRef.current === text) setNoteStatus("saved");
-        }
-      }
-      const data = await api.getNotes();
-      setNotes(data.notes);
-      setPinnedNoteId(data.pinnedId);
-    } catch (error) {
-      console.warn("메모 저장 실패:", error);
-    }
-  };
-
-  // 삭제 확인 상태는 3초 뒤 스스로 풀린다.
-  useEffect(() => {
-    if (!deleteArmed) return;
-    const id = window.setTimeout(() => setDeleteArmed(false), 3000);
-    return () => window.clearTimeout(id);
-  }, [deleteArmed]);
-
-  // 입력이 잠깐 멈추면 자동 저장한다.
-  useEffect(() => {
-    if (nav !== "notes" || noteDraft === noteSavedRef.current) return;
-    const id = window.setTimeout(() => { void flushNote(); }, 600);
-    return () => window.clearTimeout(id);
-  }, [noteDraft, nav]);
-
-  // 메모 화면을 벗어나는 순간 남은 입력을 저장한다.
-  const previousNavRef = useRef<NotchNav>("now");
-  useEffect(() => {
-    if (previousNavRef.current === "notes" && nav !== "notes") void flushNote();
-    previousNavRef.current = nav;
-  }, [nav]);
-
-  const openNote = (note: NotchNote) => {
-    void flushNote();
-    noteSessionRef.current++;
-    setDeleteArmed(false);
-    activeNoteRef.current = note.id;
-    noteDraftRef.current = note.text;
-    noteSavedRef.current = note.text;
-    setActiveNoteId(note.id);
-    setNoteDraft(note.text);
-    setNoteStatus("idle");
-  };
-
-  // 새 메모는 빈 편집기로 시작하고, 기존 내용은 먼저 저장한다.
-  const startNewNote = () => {
-    void flushNote();
-    noteSessionRef.current++;
-    setDeleteArmed(false);
-    // 메모 화면에 새로 들어올 때만 목록 선택을 건너뛰면 된다.
-    pendingNewNoteRef.current = !(expandedRef.current && navRef.current === "notes");
-    activeNoteRef.current = null;
-    noteDraftRef.current = "";
-    noteSavedRef.current = "";
-    setActiveNoteId(null);
-    setNoteDraft("");
-    setNoteStatus("idle");
-  };
-
-  // 메모 화면에 들어오면 목록을 읽고, 이어 쓸 메모(고정 → 최근)를 고른다.
-  useEffect(() => {
-    if (!expanded || nav !== "notes") return;
-    let cancelled = false;
-    void (async () => {
-      const data = await loadNotes();
-      if (!data || cancelled) return;
-      if (pendingNewNoteRef.current) {
-        pendingNewNoteRef.current = false;
-        return;
-      }
-      if (activeNoteRef.current && data.notes.some((note) => note.id === activeNoteRef.current)) return;
-      const target = data.notes.find((note) => note.id === data.pinnedId) ?? data.notes[0];
-      if (target) {
-        activeNoteRef.current = target.id;
-        noteDraftRef.current = target.text;
-        noteSavedRef.current = target.text;
-        setActiveNoteId(target.id);
-        setNoteDraft(target.text);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [expanded, nav]);
-
-  // 트레이의 `새 메모`는 노치를 펼치고 빈 메모 화면을 연다.
-  useEffect(() => {
-    return window.notchApi?.onNewNote(() => {
-      setNav("notes");
-      startNewNote();
-    });
-  }, []);
-
-  const togglePinNote = () => {
-    const api = window.notchApi;
-    const id = activeNoteRef.current;
-    if (!api || !id) return;
-    void api.pinNote(pinnedNoteId === id ? null : id).then((data) => {
-      setNotes(data.notes);
-      setPinnedNoteId(data.pinnedId);
-    }).catch((error: unknown) => console.warn("메모 고정 실패:", error));
-  };
-
-  const deleteActiveNote = () => {
-    const api = window.notchApi;
-    const id = activeNoteRef.current;
-    if (!api || !id) {
-      startNewNote();
-      return;
-    }
-    noteSessionRef.current++;
-    setDeleteArmed(false);
-    void api.deleteNote(id).then((data) => {
-      setNotes(data.notes);
-      setPinnedNoteId(data.pinnedId);
-      const next = data.notes[0];
-      activeNoteRef.current = next?.id ?? null;
-      noteDraftRef.current = next?.text ?? "";
-      noteSavedRef.current = next?.text ?? "";
-      setActiveNoteId(next?.id ?? null);
-      setNoteDraft(next?.text ?? "");
-      setNoteStatus("idle");
-    }).catch((error: unknown) => console.warn("메모 삭제 실패:", error));
-  };
-
   // 전원 전환은 즉시 반영하고, 잔량은 이벤트 직후와 주기적으로 다시 읽는다.
   useEffect(() => {
     if (!window.notchApi) return;
@@ -837,85 +855,6 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
       window.clearInterval(id);
     };
   }, []);
-
-  // 종료 시각을 기준으로 계산하므로 절전이나 렌더링 지연 후에도 남은 시간이 맞는다.
-  useEffect(() => {
-    if (timer.status !== "running") return;
-    const tick = () => {
-      const current = Date.now();
-      setTimerNow(current);
-      // 스톱워치는 끝이 없으므로 완료로 넘기지 않는다.
-      if (timer.mode === "stopwatch" || current < timer.endsAt) return;
-      setTimer((previous) =>
-        previous === timer
-          ? { status: "done", mode: timer.mode, phase: timer.phase, round: timer.round }
-          : previous,
-      );
-    };
-    tick();
-    const id = window.setInterval(tick, 250);
-    return () => window.clearInterval(id);
-  }, [timer]);
-
-  const startTimer = (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const current = Date.now();
-    setTimerNow(current);
-    if (timerMode === "stopwatch") {
-      setTimer({ status: "running", mode: "stopwatch", phase: "focus", round: 1, endsAt: current });
-    } else if (timerMode === "pomodoro") {
-      setTimer({ status: "running", mode: "pomodoro", phase: "focus", round: 1, endsAt: current + POMODORO_FOCUS_MS });
-    } else {
-      const minutes = Number(timerMinutes);
-      if (!Number.isInteger(minutes) || minutes < 1 || minutes > 1440) return;
-      setTimer({ status: "running", mode: "timer", phase: "focus", round: 1, endsAt: current + minutes * 60000 });
-    }
-    setNav("timer");
-  };
-
-  // 포모도로는 완료 알림에서 다음 단계(휴식↔집중)를 직접 시작한다.
-  const startPomodoroPhase = (phase: PomodoroPhase, round: number) => {
-    const current = Date.now();
-    setTimerNow(current);
-    setTimer({
-      status: "running",
-      mode: "pomodoro",
-      phase,
-      round,
-      endsAt: current + (phase === "focus" ? POMODORO_FOCUS_MS : POMODORO_BREAK_MS),
-    });
-    setNav("timer");
-  };
-
-  const pauseTimer = () => {
-    if (timer.status !== "running") return;
-    const current = Date.now();
-    const remainingMs = timer.mode === "stopwatch" ? Math.max(0, current - timer.endsAt) : timer.endsAt - current;
-    if (timer.mode === "stopwatch" || remainingMs > 0) {
-      setTimer({ status: "paused", mode: timer.mode, phase: timer.phase, round: timer.round, remainingMs });
-      return;
-    }
-    setTimer({ status: "done", mode: timer.mode, phase: timer.phase, round: timer.round });
-  };
-
-  const resumeTimer = () => {
-    if (timer.status !== "paused") return;
-    const current = Date.now();
-    setTimerNow(current);
-    setTimer({
-      status: "running",
-      mode: timer.mode,
-      phase: timer.phase,
-      round: timer.round,
-      endsAt: timer.mode === "stopwatch" ? current - timer.remainingMs : current + timer.remainingMs,
-    });
-  };
-
-  const clearTimer = () => {
-    setTimer({ status: "idle" });
-    setNav("now");
-  };
 
   // 재생 중에는 마지막 폴링 시점부터 경과 시간을 더해 진행률을 부드럽게 올린다.
   useEffect(() => {
@@ -1012,6 +951,33 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
 
   const hasMedia = media.active && media.title.length > 0;
   const shownTitle = cleanTitle(media.title);
+  // 같은 앱의 탭이 둘 이상이면 번호를 붙여 어느 쪽인지 구분한다.
+  const sourceChips = (() => {
+    if (media.sources.length < 2) return [];
+    const totals = new Map<string, number>();
+    for (const source of media.sources) {
+      const label = mediaAppName(source.app);
+      totals.set(label, (totals.get(label) ?? 0) + 1);
+    }
+    const seen = new Map<string, number>();
+    return media.sources.map((source) => {
+      const label = mediaAppName(source.app);
+      const index = (seen.get(label) ?? 0) + 1;
+      seen.set(label, index);
+      return { ...source, label: (totals.get(label) ?? 1) > 1 ? `${label}·${index}` : label };
+    });
+  })();
+  // 직접 고른 세션으로 바꾸고, 다음 폴링을 기다리지 않고 바로 다시 읽는다.
+  const selectSource = (id: string) => {
+    const api = window.notchApi;
+    if (!api || playPending || id === media.id) return;
+    void api
+      .selectMedia(id)
+      .then((ok) => {
+        if (ok) void readMedia();
+      })
+      .catch((error: unknown) => console.warn("미디어 소스 전환 실패:", error));
+  };
   // 표지가 있는 한 일시정지 중에도 그 곡의 대표색을 유지한다. 미디어가 사라질 때만 기본색으로 돌아간다.
   const mediaAccentSource = hasMedia ? media.thumbnail : "";
 
@@ -1034,55 +1000,33 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
       cancelled = true;
     };
   }, [mediaAccentSource]);
-  const view = resolveView(timer, hasMedia, media.status === "Playing", nav);
-  const timerActive = timer.status === "running" || timer.status === "paused";
-  const timerLabel = timerClock(timerSpan(timer, timerNow));
-  const timerChip = timerChipLabel(timer, timerLabel);
-  const timerCaption =
-    timer.status === "idle"
-      ? ""
-      : timer.mode === "pomodoro"
-        ? `${timer.phase === "focus" ? "Focus" : "Break"} · Round ${timer.round}`
-        : timer.mode === "stopwatch"
-          ? "Elapsed time"
-          : "Timer running";
+  const view = resolveView(hasMedia);
 
-  // 접으면 NOW로 돌아간다(타이머가 살아 있으면 view가 다시 타이머를 고른다).
-  useEffect(() => {
-    if (!expanded) setNav("now");
-  }, [expanded]);
-
-  // 미디어가 없을 때 펼친 화면은 HUD만 보여준다. 시계와 CPU는 그때만 돈다.
+  // 미디어가 없을 때 펼친 화면은 HUD만 보여준다. 시계와 온도는 그때만 돈다.
   const [hudNow, setHudNow] = useState(() => Date.now());
-  const [cpu, setCpu] = useState(0);
+  const [temp, setTemp] = useState<number | null>(null);
   const [gpu, setGpu] = useState<number | null>(null);
-  const [ping, setPing] = useState(0);
-  const [polls, setPolls] = useState(0);
   const [weather, setWeather] = useState<{ tempC: number; kind: string; city: string } | null>(null);
 
   useEffect(() => {
     if (!expanded || hasMedia) return;
     const id = window.setInterval(() => setHudNow(Date.now()), 1000);
-    return () => window.clearInterval(id);
-  }, [expanded, hasMedia]);
+    return () => window.clearInterval(id);  }, [expanded, hasMedia]);
 
   useEffect(() => {
     if (!expanded || hasMedia || !window.notchApi) return;
     let cancelled = false;
     const read = () => {
-      const startedAt = performance.now();
       void window.notchApi!
-        .getStats()
-        .then((stats) => {
+        .getTemp()
+        .then((value) => {
           if (cancelled) return;
-          setCpu(stats.cpu);
-          setPing(Math.round(performance.now() - startedAt));
-          setPolls((count) => count + 1);
+          setTemp(value);
         })
         .catch(() => undefined);
     };
     void read();
-    const id = window.setInterval(read, 1500);
+    const id = window.setInterval(read, 5000);
     return () => {
       cancelled = true;
       window.clearInterval(id);
@@ -1126,8 +1070,7 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
     return () => {
       cancelled = true;
       window.clearInterval(id);
-    };
-  }, [expanded, hasMedia]);
+    };  }, [expanded, hasMedia]);
 
   // 배터리는 평소에 숨기고, 충전 중이거나 30% 이하일 때만 글자로 알린다.
   const lowBattery = !!battery?.hasBattery && !battery.charging && battery.percent <= 30;
@@ -1140,13 +1083,11 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
           ? `LOW ${battery.percent}%`
           : "NOTCH-01";
   const collapsedBadge = battery?.hasBattery ? (battery.charging ? "bolt" : lowBattery ? "LOW" : "") : "";
-  // 미디어를 펼친 화면에서는 NOTCH 문구를 빼고, 충전·배터리 부족일 때만 그 자리에 쓴다.
+  // 미디어 패널에서는 중복되는 NOTCH 문구를 숨기고 전원 상태만 표시한다.
   const footerText =
     expanded && view === "media" && !(battery?.hasBattery && (battery.charging || lowBattery))
       ? ""
       : footerLabel;
-  // 펼친 내비게이션 위쪽에 같은 문구가 있으므로, 아래에는 충전·부족 알림만 남긴다.
-  const navFooter = battery?.hasBattery && (battery.charging || lowBattery) ? footerLabel : "";
   const progress = media.duration > 0 ? Math.min(1, Math.max(0, livePosition / media.duration)) : 0;
   const hudDate = new Date(hudNow);
   const pad2 = (value: number) => String(value).padStart(2, "0");
@@ -1154,11 +1095,9 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
   const hudHm = `${pad2(hudDate.getHours())}:${pad2(hudDate.getMinutes())}`;
   const hudSec = pad2(hudDate.getSeconds());
   const hudDay = `${hudDate.getFullYear()}.${pad2(hudDate.getMonth() + 1)}.${pad2(hudDate.getDate())} ${hudDate.toLocaleDateString("en-US", { weekday: "short" }).toUpperCase()}`;
-  const hudCpu = String(Math.round(cpu)).padStart(3, " ");
+  const hudTemp = (temp === null ? "--" : String(Math.round(temp))).padStart(3, " ");
   const hudGpu = (gpu === null ? "--" : String(Math.round(gpu))).padStart(3, " ");
-  const hudPing = String(ping).padStart(3, " ");
-  const hudPolls = String(polls).padStart(3, " ");
-  const cpuHot = cpu > 80;
+  const tempHot = temp !== null && temp >= 85;
   // 제목과 같은 앨범은 중복이라 메타 줄에서 뺀다.
   const metaAlbum =
     media.album && media.album !== media.title && media.album !== shownTitle ? media.album : "";
@@ -1227,7 +1166,7 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
       cancelled = true;
       observer.disconnect();
     };
-  }, [expanded, collapsedLyric, widestLyric, shownTitle, timerActive, collapsedBadge]);
+  }, [expanded, collapsedLyric, widestLyric, shownTitle, collapsedBadge]);
 
   // 펼친 화면: 가장 긴 가사 줄이 두 줄로 접히지 않을 만큼만 넓힌다(좌우 여백 56 + 여유).
   useEffect(() => {
@@ -1240,7 +1179,7 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
     let cancelled = false;
     const update = () => {
       if (cancelled) return;
-      // 내비게이션과 좌우 여백을 포함한 폭. 가사가 길면 여기서 늘어난다.
+      // 미디어 패널과 좌우 여백을 포함한 폭. 가사가 길면 여기서 늘어난다.
       setExpandedWidth(Math.min(860, Math.max(EXPANDED_WIDTH, Math.ceil(measure.offsetWidth + 200))));
     };
     update();
@@ -1250,19 +1189,13 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
     };
   }, [expanded, view, hasSynced, widestLyric]);
 
-  // 미디어 가사 외의 화면(타이머/HUD)에서는 긴 가사 폭을 물려받지 않고 기본 폭으로 돌아온다.
+  // HUD는 미디어 가사 폭을 물려받지 않고 기본 폭으로 돌아온다.
   const notchWidth = expanded
     ? view === "media" && hasSynced && widestLyric
       ? expandedWidth ?? EXPANDED_WIDTH
       : EXPANDED_WIDTH
     : collapsedWidth;
 
-  // 내비게이션에서 지금 영역을 표시한다(완료 화면은 타이머로 본다).
-  const navActive: NotchNav = view === "notes" ? "notes" : view === "timer" || view === "done" ? "timer" : "now";
-  // 고정한 메모는 목록 맨 위에 두어 항상 바로 보이게 한다.
-  const orderedNotes = pinnedNoteId
-    ? [...notes].sort((a, b) => Number(b.id === pinnedNoteId) - Number(a.id === pinnedNoteId))
-    : notes;
   const showArt = lyrics.state === "missing" || lyrics.state === "instrumental" || lyrics.state === "idle";
   const lyricsText =
     lyrics.state === "ready"
@@ -1278,7 +1211,7 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
       ref={notchRef}
       role="button"
       tabIndex={0}
-      className={`notch ${expanded ? "is-expanded" : "is-collapsed"}${view === "media" ? " has-media" : ""}${media.status === "Playing" ? " is-playing" : ""}${!expanded && collapsedBadge ? " has-status" : ""}${timerActive && view === "media" ? " has-timer" : ""}`}
+      className={`notch ${expanded ? "is-expanded" : "is-collapsed"}${view === "media" ? " has-media" : ""}${media.status === "Playing" ? " is-playing" : ""}${!expanded && collapsedBadge ? " has-status" : ""}`}
       style={{
         ...(notchWidth ? { width: `${notchWidth}px` } : {}),
         "--media-accent": mediaAccent,
@@ -1296,11 +1229,7 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
       aria-label="Notch"
     >
       <span className="notch-body" />
-      {view === "done" ? (
-        <span className="notch-collapsed-timer is-done" role="status">{`${timerTag(timer)} DONE`}</span>
-      ) : view === "timer" && timerActive ? (
-        <span className={`notch-collapsed-timer${timer.status === "paused" ? " is-paused" : ""}`}>{timerChip}</span>
-      ) : view === "media" ? (
+      {view === "media" ? (
         <span className={`notch-now${collapsedLyric ? " has-lyric" : ""}`}>
           <span ref={trackRef} className="notch-now-track">
             {media.artist && <span className="notch-now-artist">{displayArtist(media.artist)}</span>}
@@ -1332,180 +1261,16 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
           <span className="notch-eye" />
         </span>
       )}
-      {view === "media" && timerActive && (
-        <span className={`notch-timer-chip${timer.status === "paused" ? " is-paused" : ""}`}>{timerChip}</span>
-      )}
       {footerText && <span className={`notch-title${lowBattery ? " is-low" : ""}`}>{footerText}</span>}
       {collapsedBadge === "bolt" ? (
         <span className="notch-bolt" aria-label="충전 중" />
       ) : collapsedBadge ? (
         <span className={`notch-status${lowBattery ? " is-low" : ""}`}>{collapsedBadge}</span>
       ) : null}
-      {/* 접힌 동안에는 패널 안의 버튼·입력이 탭으로 잡히지 않게 inert를 준다. */}
+      {/* 접힌 동안 패널 안의 버튼이 탭으로 잡히지 않게 inert를 준다. */}
       <div className="notch-panel" inert={!expanded}>
-        <nav className="notch-nav" aria-label="Notch sections">
-          <span className="notch-nav-brand">NOTCH-01</span>
-          <button
-            type="button"
-            className={`notch-nav-item${navActive === "now" ? " is-on" : ""}`}
-            aria-pressed={navActive === "now"}
-            onClick={(e) => { e.stopPropagation(); setNav("now"); }}
-          >
-            NOW
-          </button>
-          <button
-            type="button"
-            className={`notch-nav-item${navActive === "timer" ? " is-on" : ""}`}
-            aria-pressed={navActive === "timer"}
-            onClick={(e) => { e.stopPropagation(); setNav("timer"); }}
-          >
-            TIMER
-          </button>
-          <button
-            type="button"
-            className={`notch-nav-item${navActive === "notes" ? " is-on" : ""}`}
-            aria-pressed={navActive === "notes"}
-            onClick={(e) => { e.stopPropagation(); setNav("notes"); }}
-          >
-            NOTES
-          </button>
-          <span className={`notch-nav-foot${lowBattery ? " is-low" : ""}`}>{navFooter}</span>
-        </nav>
         <div className="notch-main">
-        {view === "notes" ? (
-          <div className="notch-notes">
-            <div className="notch-notes-list">
-              <span className="notch-notes-head">NOTES</span>
-              <div className="notch-notes-rows">
-                {orderedNotes.map((note) => (
-                  <button
-                    key={note.id}
-                    type="button"
-                    className={`notch-note-row${note.id === activeNoteId ? " is-on" : ""}`}
-                    onClick={(e) => { e.stopPropagation(); openNote(note); }}
-                  >
-                    <span className="notch-note-stamp">{noteStamp(note.updatedAt)}</span>
-                    <span className="notch-note-preview">{notePreview(note.text)}</span>
-                    {note.id === pinnedNoteId && <span className="notch-note-pin">PIN</span>}
-                  </button>
-                ))}
-                {notes.length === 0 && <span className="notch-notes-empty">새 메모를 적어 두세요.</span>}
-              </div>
-              <button
-                type="button"
-                className="notch-note-new"
-                onClick={(e) => { e.stopPropagation(); startNewNote(); }}
-              >
-                + NEW
-              </button>
-            </div>
-            <div className="notch-notes-editor" onClick={(e) => e.stopPropagation()}>
-              <textarea
-                className="notch-note-input"
-                value={noteDraft}
-                onChange={(e) => { setNoteDraft(e.target.value); setNoteStatus("editing"); }}
-                placeholder="메모"
-                spellCheck={false}
-              />
-              <div className="notch-note-bar">
-                <span className={`notch-note-state${noteStatus === "saved" ? " is-saved" : ""}`}>
-                  {noteStatus === "saved" ? "SAVED" : noteStatus === "editing" ? "EDITING" : ""}
-                </span>
-                <button type="button" className="notch-btn" onClick={togglePinNote} disabled={!activeNoteId}>
-                  {activeNoteId && pinnedNoteId === activeNoteId ? "UNPIN" : "PIN"}
-                </button>
-                <button
-                  type="button"
-                  className={`notch-btn${deleteArmed ? " is-armed" : ""}`}
-                  onClick={() => {
-                    if (!deleteArmed) {
-                      setDeleteArmed(true);
-                      return;
-                    }
-                    deleteActiveNote();
-                  }}
-                  disabled={!activeNoteId}
-                >
-                  {deleteArmed ? "SURE?" : "DELETE"}
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : view === "done" ? (
-          <div className="notch-timer-panel" role="status">
-            <span className="notch-timer-done">{`${timerTag(timer)} DONE`}</span>
-            <span className="notch-timer-caption">{timerDoneCaption(timer)}</span>
-            <div className="notch-controls">
-              {timer.status === "done" && timer.mode === "pomodoro" && (
-                <button
-                  type="button"
-                  className="notch-btn"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (timer.phase === "focus") startPomodoroPhase("break", timer.round);
-                    else startPomodoroPhase("focus", timer.round + 1);
-                  }}
-                >
-                  {timer.phase === "focus" ? "Start break" : "Start focus"}
-                </button>
-              )}
-              <button type="button" className="notch-btn" onClick={(e) => { e.stopPropagation(); clearTimer(); }}>Dismiss</button>
-            </div>
-          </div>
-        ) : view === "timer" ? (
-          <div className="notch-timer-panel" onClick={(e) => {
-            if (!timerActive || (e.target as HTMLElement).closest("button, input, label")) e.stopPropagation();
-          }}>
-            {timerActive ? (
-              <>
-                <span className={`notch-timer-caption${timer.status === "running" ? " is-live" : ""}`}>{timer.status === "paused" ? `Paused · ${timerCaption}` : timerCaption}</span>
-                <span className="notch-timer-clock">{timerLabel}</span>
-                <div className="notch-controls">
-                  {timer.status === "running" ? (
-                    <button type="button" className="notch-btn" onClick={pauseTimer}>Pause</button>
-                  ) : (
-                    <button type="button" className="notch-btn" onClick={resumeTimer}>Resume</button>
-                  )}
-                  <button type="button" className="notch-btn" onClick={clearTimer}>Cancel</button>
-
-                </div>
-              </>
-            ) : (
-              <form className="notch-timer-form" onSubmit={startTimer}>
-                <div className="notch-modes" role="group" aria-label="Timer mode">
-                  {([
-                    ["timer", "Timer"],
-                    ["stopwatch", "Stopwatch"],
-                    ["pomodoro", "Pomodoro"],
-                  ] as const).map(([value, label]) => (
-                    <button
-                      key={value}
-                      type="button"
-                      className={`notch-mode${timerMode === value ? " is-on" : ""}`}
-                      aria-pressed={timerMode === value}
-                      onClick={(e) => { e.stopPropagation(); setTimerMode(value); }}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                {timerMode === "timer" ? (
-                  <>
-                    <label htmlFor="timer-minutes">Timer duration (minutes)</label>
-                    <input id="timer-minutes" type="number" min="1" max="1440" step="1" required value={timerMinutes} onChange={(e) => setTimerMinutes(e.target.value)} />
-                  </>
-                ) : (
-                  <span className="notch-timer-caption">
-                    {timerMode === "pomodoro" ? "25 min focus · 5 min break" : "Counting up from 0:00"}
-                  </span>
-                )}
-                <div className="notch-controls">
-                  <button type="submit" className="notch-btn is-start">Start</button>
-                </div>
-              </form>
-            )}
-          </div>
-        ) : view === "hud" ? (
+          {view === "hud" ? (
           <div className="notch-hud">
             <span className="notch-hud-top">
               <span className="notch-hud-clock">
@@ -1524,10 +1289,11 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
             </span>
             <span className="notch-hud-date">{hudDay}</span>
             <span className="notch-hud-strip">
-              <span className={`notch-hud-cpu${cpuHot ? " is-hot" : ""}`}>{`CPU ${hudCpu}%`}</span>
-              {battery && !battery.hasBattery && <span>{`GPU ${hudGpu}%`}</span>}
-              <span className="notch-hud-ping">{`PING ${hudPing}ms`}</span>
-              <span>{`POLL ${hudPolls}`}</span>
+              <span className="notch-hud-readings">
+                <span className={`notch-hud-thermal${tempHot ? " is-hot" : ""}`}>{`TEMP ${hudTemp}°C`}</span>
+                {battery && !battery.hasBattery && <span>{`GPU ${hudGpu}%`}</span>}
+              </span>
+              <VolumeDeck active={expanded} />
             </span>
           </div>
         ) : (
@@ -1556,6 +1322,23 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
           </span>
           <span className="notch-time">{hasMedia ? clock(media.duration) : "--:--"}</span>
         </div>
+        {sourceChips.length > 1 && (
+          <div className="notch-sources" role="group" aria-label="재생 소스">
+            {sourceChips.map((source) => (
+              <button
+                key={source.id}
+                type="button"
+                className={`notch-source${source.id === media.id ? " is-on" : ""}`}
+                aria-pressed={source.id === media.id}
+                disabled={playPending}
+                title={`${source.title}${source.artist ? ` · ${source.artist}` : ""}${source.status === "Playing" ? "" : " (일시정지)"}`}
+                onClick={(e) => { e.stopPropagation(); selectSource(source.id); }}
+              >
+                {source.label}
+              </button>
+            ))}
+          </div>
+        )}
         {hasSynced ? (
           <div className="notch-lyrics notch-lyrics-synced">
             <div key={activeLine} className="notch-line is-active">
@@ -1586,15 +1369,18 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
           <span ref={lineMeasureRef} className="notch-line-measure" aria-hidden="true">{widestLyric}</span>
         )}
         <div className="notch-controls">
-          <button type="button" className="notch-btn" onClick={control("Previous")} disabled={playPending || !media.canPrev} aria-label="이전">
-            PREV
-          </button>
-          <button type="button" className="notch-btn" onClick={control("Play")} disabled={playPending || !media.canPlayPause} aria-label="재생/일시정지">
-            {media.status === "Playing" ? "PAUSE" : "PLAY"}
-          </button>
-          <button type="button" className="notch-btn" onClick={control("Next")} disabled={playPending || !media.canNext} aria-label="다음">
-            NEXT
-          </button>
+          <span className="notch-controls-group">
+            <button type="button" className="notch-btn" onClick={control("Previous")} disabled={playPending || !media.canPrev} aria-label="이전">
+              PREV
+            </button>
+            <button type="button" className="notch-btn" onClick={control("Play")} disabled={playPending || !media.canPlayPause} aria-label="재생/일시정지">
+              {media.status === "Playing" ? "PAUSE" : "PLAY"}
+            </button>
+            <button type="button" className="notch-btn" onClick={control("Next")} disabled={playPending || !media.canNext} aria-label="다음">
+              NEXT
+            </button>
+          </span>
+          <VolumeDeck active={expanded} />
         </div>
           </>
         )}

@@ -1,7 +1,7 @@
 {
   "name": "notch",
   "version": "1.0.0",
-  "description": "Windows 상단 미디어·타이머 노치 위젯",
+  "description": "Windows 상단 미디어·시스템 상태 노치 위젯",
   "author": "MoRinGnA",
   "main": "dist-electron/main.js",
   "scripts": {

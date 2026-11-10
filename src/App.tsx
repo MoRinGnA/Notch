@@ -62,11 +62,6 @@ export function App() {
     setHovering(false);
   }, [hoverOpen]);
 
-  // 트레이에서 새 메모를 열면 노치를 고정해 펼친 채로 둔다.
-  useEffect(() => {
-    return window.notchApi?.onNewNote(() => setPinned(true));
-  }, []);
-
   useEffect(() => {
     return window.notchApi?.onToggle(() => {
       if (pinnedRef.current) {
@@ -116,12 +111,6 @@ export function App() {
     if (closeTimer.current) window.clearTimeout(closeTimer.current);
     closeTimer.current = window.setTimeout(() => {
       closeTimer.current = null;
-      // 입력 중인 값이 있을 때만 접힘을 보류한다. 버튼 포커스는 타이머 자동 접힘을 막지 않는다.
-      const active = document.activeElement;
-      const editing = active instanceof HTMLElement
-        && active.closest(".notch")
-        && active.matches("input:not([type=button]):not([type=submit]), textarea, select, [contenteditable='true']");
-      if (editing) return;
       setHovering(false);
     }, HOVER_CLOSE_MS);
   };
