@@ -55,16 +55,35 @@ contextBridge.exposeInMainWorld("notchApi", {
   copyClipboardItem: (id: number) => ipcRenderer.invoke("notch:clip-copy", id) as Promise<boolean>,
   clearClipboard: () => ipcRenderer.invoke("notch:clip-clear") as Promise<boolean>,
   getVoiceState: () => ipcRenderer.invoke("notch:voice-state") as Promise<{
-    inChannel: boolean; muted: boolean; deafened: boolean; speaking: boolean;
+    inChannel: boolean;
+    muted: boolean;
+    deafened: boolean;
+    speaking: boolean;
+    channel: string;
+    members: { id: string; name: string; muted: boolean; deafened: boolean; speaking: boolean; self: boolean }[];
   } | null>,
   setVoice: (patch: { mute?: boolean; deaf?: boolean }) =>
     ipcRenderer.invoke("notch:voice-set", patch) as Promise<boolean>,
   onVoice: (
-    callback: (voice: { inChannel: boolean; muted: boolean; deafened: boolean; speaking: boolean }) => void,
+    callback: (voice: {
+      inChannel: boolean;
+      muted: boolean;
+      deafened: boolean;
+      speaking: boolean;
+      channel: string;
+      members: { id: string; name: string; muted: boolean; deafened: boolean; speaking: boolean; self: boolean }[];
+    }) => void,
   ) => {
     const listener = (
       _event: Electron.IpcRendererEvent,
-      voice: { inChannel: boolean; muted: boolean; deafened: boolean; speaking: boolean },
+      voice: {
+        inChannel: boolean;
+        muted: boolean;
+        deafened: boolean;
+        speaking: boolean;
+        channel: string;
+        members: { id: string; name: string; muted: boolean; deafened: boolean; speaking: boolean; self: boolean }[];
+      },
     ) => callback(voice);
     ipcRenderer.on("notch:voice", listener);
     return () => ipcRenderer.removeListener("notch:voice", listener);

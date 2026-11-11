@@ -7,6 +7,16 @@ import { randomUUID } from "node:crypto";
 // Discord API가 IPv6로 먼저 붙었다가 멈추는 환경이 있어 IPv4를 먼저 쓴다.
 dns.setDefaultResultOrder("ipv4first");
 
+export interface DiscordVoiceMember {
+  id: string;
+  name: string;
+  // 마이크가 꺼져 있는지(스스로 끈 경우와 서버에서 끈 경우를 모두 포함).
+  muted: boolean;
+  deafened: boolean;
+  speaking: boolean;
+  self: boolean;
+}
+
 export interface DiscordVoice {
   // true일 때만 노치에 마이크 표시를 띄운다(음성 채널에 있을 때).
   inChannel: boolean;
@@ -14,9 +24,29 @@ export interface DiscordVoice {
   deafened: boolean;
   // 내 계정이 지금 말하고 있는지. SPEAKING 이벤트가 끊겨도 풀리도록 시간제한을 둔다.
   speaking: boolean;
+  // 지금 들어가 있는 채널 이름(모르면 빈 문자열).
+  channel: string;
+  // 같은 채널에 있는 사람들. 들어오고 나가는 즉시 갱신된다.
+  members: DiscordVoiceMember[];
 }
 
-const OFFLINE: DiscordVoice = { inChannel: false, muted: false, deafened: false, speaking: false };
+const OFFLINE: DiscordVoice = {
+  inChannel: false,
+  muted: false,
+  deafened: false,
+  speaking: false,
+  channel: "",
+  members: [],
+};
+
+interface RawVoiceState {
+  channel_id?: unknown;
+  nick?: unknown;
+  mute?: unknown;
+  deaf?: unknown;
+  user?: { id?: unknown; global_name?: unknown; username?: unknown };
+  voice_state?: { self_mute?: unknown; self_deaf?: unknown; mute?: unknown; deaf?: unknown };
+}
 
 // Discord는 \\.\pipe\discord-ipc-0..9 를 순서대로 연다.
 const PIPE_PREFIX = `${String.fromCharCode(92, 92, 46, 92)}pipe${String.fromCharCode(92)}discord-ipc-`;
@@ -116,23 +146,54 @@ export function createDiscordBridge(appData: string): DiscordBridge {
   let disposed = false;
   let buffer = Buffer.alloc(0);
   let uid = "";
-  let speakingTimer: NodeJS.Timeout | null = null;
+  // 사람별 발화 표시 만료 타이머. 이벤트가 올 때만 만진다(폴링 아님).
+  const speakingTimers = new Map<string, NodeJS.Timeout>();
+  // 지금 들어가 있는 채널 id. 다른 채널의 이벤트는 무시한다.
+  let currentChannel = "";
   let state: DiscordVoice = { ...OFFLINE };
   const pending = new Map<string, (data: unknown, failed: boolean) => void>();
   const listeners = new Set<(voice: DiscordVoice) => void>();
 
+  // 멤버 목록까지 비교해야 하므로 값 전체를 한 줄로 요약해 같은지 본다(이벤트가 있을 때만 계산).
+  const signature = (voice: DiscordVoice): string =>
+    [
+      voice.inChannel ? 1 : 0,
+      voice.muted ? 1 : 0,
+      voice.deafened ? 1 : 0,
+      voice.speaking ? 1 : 0,
+      voice.channel,
+      ...voice.members.map(
+        (m) => `${m.id}:${m.name}:${m.muted ? 1 : 0}${m.deafened ? 1 : 0}${m.speaking ? 1 : 0}`,
+      ),
+    ].join("|");
+
   const emit = (patch: Partial<DiscordVoice>) => {
     const next = { ...state, ...patch };
-    if (
-      next.inChannel === state.inChannel &&
-      next.muted === state.muted &&
-      next.deafened === state.deafened &&
-      next.speaking === state.speaking
-    ) {
-      return;
-    }
+    if (signature(next) === signature(state)) return;
     state = next;
     for (const listener of listeners) listener(next);
+  };
+
+  // 채널 객체의 voice_states 항목을 화면에서 쓸 수 있는 모양으로 바꾼다.
+  const parseMember = (raw: unknown): DiscordVoiceMember | null => {
+    if (!raw || typeof raw !== "object") return null;
+    const value = raw as RawVoiceState;
+    const id = typeof value.user?.id === "string" ? value.user.id : "";
+    if (!id) return null;
+    // 서버 별명이 있으면 그걸, 없으면 표시 이름, 그다음 계정 이름 순으로 쓴다.
+    const name =
+      [value.nick, value.user?.global_name, value.user?.username].find(
+        (candidate): candidate is string => typeof candidate === "string" && candidate.length > 0,
+      ) ?? "?";
+    const flags = value.voice_state ?? {};
+    return {
+      id,
+      name,
+      muted: flags.self_mute === true || flags.mute === true || value.mute === true,
+      deafened: flags.self_deaf === true || flags.deaf === true || value.deaf === true,
+      speaking: false,
+      self: !!uid && id === uid,
+    };
   };
 
   // ERROR 응답과 타임아웃을 구분해야 하는 쓰기 명령을 위해 실패 여부를 함께 돌려준다.
@@ -169,9 +230,15 @@ export function createDiscordBridge(appData: string): DiscordBridge {
       return false;
     }
     // 확인 이벤트가 오기 전에 화면이 먼저 반응하도록 바로 반영한다.
+    // 참가자 목록의 내 줄도 함께 고친다(RPC로 바꾸면 VOICE_STATE_UPDATE가 오지 않음).
+    const muted = typeof patch.mute === "boolean" ? patch.mute : state.muted;
+    const deafened = typeof patch.deaf === "boolean" ? patch.deaf : state.deafened;
     emit({
-      ...(typeof patch.mute === "boolean" ? { muted: patch.mute } : {}),
-      ...(typeof patch.deaf === "boolean" ? { deafened: patch.deaf } : {}),
+      ...(typeof patch.mute === "boolean" ? { muted } : {}),
+      ...(typeof patch.deaf === "boolean" ? { deafened } : {}),
+      members: state.members.map((member) =>
+        member.self ? { ...member, muted, deafened } : member,
+      ),
     });
     return true;
   };
@@ -189,18 +256,38 @@ export function createDiscordBridge(appData: string): DiscordBridge {
     }
   };
 
+  // 사람마다 발화 표시를 따로 만료시킨다. 끝 이벤트를 놓쳐도 계속 켜져 있지 않게.
+  const bySelfFirst = (a: DiscordVoiceMember, b: DiscordVoiceMember): number =>
+    Number(b.self) - Number(a.self) || a.name.localeCompare(b.name);
+
+  const markSpeaking = (id: string, speaking: boolean) => {
+    const previous = speakingTimers.get(id);
+    if (previous) clearTimeout(previous);
+    speakingTimers.delete(id);
+    if (speaking) {
+      speakingTimers.set(
+        id,
+        setTimeout(() => {
+          speakingTimers.delete(id);
+          markSpeaking(id, false);
+        }, SPEAKING_HOLD_MS),
+      );
+    }
+    const members = state.members.map((member) =>
+      member.id === id ? { ...member, speaking } : member,
+    );
+    if (members.some((member, i) => member.speaking !== state.members[i]?.speaking)) {
+      emit({ members });
+    }
+  };
+
+  // 다른 사람의 발화도 같은 이벤트로 온다. 내 것만 따로 표시에 쓴다.
   const applySpeaking = (data: unknown, speaking: boolean) => {
     if (!data || typeof data !== "object") return;
     const value = data as { user_id?: unknown };
-    if (uid && value.user_id !== uid) return;
-    if (typeof value.user_id !== "string") return;
-    emit({ speaking });
-    if (speakingTimer) clearTimeout(speakingTimer);
-    speakingTimer = null;
-    if (speaking) {
-      // 끝 이벤트를 놓쳐도 표시가 계속 켜져 있지 않게 한다.
-      speakingTimer = setTimeout(() => emit({ speaking: false }), SPEAKING_HOLD_MS);
-    }
+    if (typeof value.user_id !== "string" || value.user_id.length === 0) return;
+    if (uid && value.user_id === uid) emit({ speaking });
+    markSpeaking(value.user_id, speaking);
   };
 
   // 채널 객체는 id로 오고, VOICE_CHANNEL_SELECT 이벤트는 channel_id로 온다. 둘 다 받는다.
@@ -215,13 +302,65 @@ export function createDiscordBridge(appData: string): DiscordBridge {
     if (!channel) return;
     void call("SUBSCRIBE", { channel_id: channel }, "SPEAKING_START");
     void call("SUBSCRIBE", { channel_id: channel }, "SPEAKING_STOP");
+    // 같은 채널의 입장·퇴장·음소거 변화를 받아 목록을 실시간으로 맞춘다.
+    void call("SUBSCRIBE", { channel_id: channel }, "VOICE_STATE_CREATE");
+    void call("SUBSCRIBE", { channel_id: channel }, "VOICE_STATE_UPDATE");
+    void call("SUBSCRIBE", { channel_id: channel }, "VOICE_STATE_DELETE");
+  };
+
+  // 채널 참가자 목록을 새로 읽는다(입장·퇴장 이벤트가 올 때도 다시 부른다).
+  const applyChannel = (data: unknown) => {
+    if (!data || typeof data !== "object") return;
+    const value = data as { name?: unknown; voice_states?: unknown };
+    const states = Array.isArray(value.voice_states) ? value.voice_states : [];
+    // 말하는 중 표시는 이벤트로만 갱신되므로, 목록을 다시 읽어도 유지한다.
+    const speaking = new Map(state.members.map((member) => [member.id, member.speaking]));
+    const members = states
+      .map(parseMember)
+      .filter((member): member is DiscordVoiceMember => !!member)
+      .map((member) => ({ ...member, speaking: speaking.get(member.id) === true }));
+    emit({ members, channel: typeof value.name === "string" ? value.name : "" });
+  };
+
+  // 누군가 들어오거나 나가거나 음소거를 바꿨을 때. 목록을 그대로 맞춘다.
+  const applyMemberEvent = (evt: string, data: unknown) => {
+    if (!data || typeof data !== "object") return;
+    const value = data as RawVoiceState;
+    // 채널 id가 함께 오면 지금 내가 있는 채널의 변화만 반영한다.
+    if (typeof value.channel_id === "string" && currentChannel && value.channel_id !== currentChannel) {
+      return;
+    }
+    const member = parseMember(value.voice_state ?? value);
+    if (!member) return;
+    if (evt === "VOICE_STATE_DELETE") {
+      const members = state.members.filter((other) => other.id !== member.id);
+      if (members.length !== state.members.length) emit({ members });
+      return;
+    }
+    const exists = state.members.some((other) => other.id === member.id);
+    if (!exists) {
+      emit({ members: [...state.members, member].sort(bySelfFirst) });
+      return;
+    }
+    // 발화 표시는 SPEAKING 이벤트로만 바뀌므로 이 이벤트에서 덮어쓰지 않는다.
+    emit({
+      members: state.members.map((other) =>
+        other.id === member.id ? { ...member, speaking: other.speaking } : other,
+      ),
+    });
   };
 
   const refreshChannel = async () => {
     const channel = await call("GET_SELECTED_VOICE_CHANNEL");
     const id = channelId(channel);
+    currentChannel = id;
     emit({ inChannel: id.length > 0, speaking: false });
-    if (id) subscribeSpeaking(id);
+    if (id) {
+      applyChannel(channel);
+      subscribeSpeaking(id);
+    } else {
+      applyChannel(null);
+    }
   };
 
   const handleFrame = (op: number, payload: string) => {
@@ -262,12 +401,27 @@ export function createDiscordBridge(appData: string): DiscordBridge {
       applySpeaking(message.data, message.evt === "SPEAKING_START");
       return;
     }
+    if (
+      message.evt === "VOICE_STATE_CREATE" ||
+      message.evt === "VOICE_STATE_UPDATE" ||
+      message.evt === "VOICE_STATE_DELETE"
+    ) {
+      applyMemberEvent(message.evt, message.data);
+      return;
+    }
     if (message.evt === "VOICE_CHANNEL_SELECT") {
       const id = channelId(message.data);
-      if (!id && speakingTimer) clearTimeout(speakingTimer);
-      if (!id) speakingTimer = null;
-      emit({ inChannel: id.length > 0, speaking: false });
-      if (id) subscribeSpeaking(id);
+      currentChannel = id;
+      if (!id) {
+        for (const timer of speakingTimers.values()) clearTimeout(timer);
+        speakingTimers.clear();
+        emit({ inChannel: false, speaking: false, members: [], channel: "" });
+        return;
+      }
+      emit({ inChannel: true, speaking: false });
+      subscribeSpeaking(id);
+      // 채널이 바뀌면 참가자 목록을 새로 읽는다.
+      void call("GET_SELECTED_VOICE_CHANNEL").then(applyChannel);
       return;
     }
   };
@@ -307,10 +461,11 @@ export function createDiscordBridge(appData: string): DiscordBridge {
     socket = null;
     buffer = Buffer.alloc(0);
     uid = "";
+    currentChannel = "";
     pending.clear();
-    if (speakingTimer) clearTimeout(speakingTimer);
-    speakingTimer = null;
-    state = { ...OFFLINE };
+    for (const timer of speakingTimers.values()) clearTimeout(timer);
+    speakingTimers.clear();
+    state = { ...OFFLINE, members: [] };
     for (const listener of listeners) listener(state);
   };
 

@@ -1275,6 +1275,125 @@ body,
 }
 
 /* 클립보드 기록: 앱별 볼륨과 같은 머리·목록·발 구조를 그대로 쓴다. */
+/* 디스코드 전용 화면(펼쳤을 때만). */
+.notch-voice {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.notch-voice-head {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.notch-voice-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.notch-voice-count {
+  flex: none;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  color: rgba(255, 255, 255, 0.45);
+  font-variant-numeric: tabular-nums;
+}
+
+.notch-voice-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.notch-voice-list::-webkit-scrollbar {
+  width: 0;
+}
+
+.notch-voice-row {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 5px;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: rgba(255, 255, 255, 0.6);
+  transition: color 0.12s ease;
+}
+
+/* 지금 말하는 사람만 밝아진다. */
+.notch-voice-row.is-speaking {
+  color: #ffffff;
+}
+
+.notch-voice-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notch-voice-flag {
+  flex: none;
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  color: rgba(255, 255, 255, 0.38);
+}
+
+.notch-voice-empty {
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.notch-voice-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+/* 접힌 노치: 다른 사람이 말할 때만 마이크 아이콘 왼쪽 빈자리에 이니셜이 뜬다. */
+.notch-voice-now {
+  position: absolute;
+  right: 39px;
+  top: 50%;
+  z-index: 4;
+  display: flex;
+  gap: 2px;
+  transform: translateY(-50%);
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--notch-accent);
+  pointer-events: none;
+}
+
 .notch-clip {
   flex: 1;
   min-height: 0;

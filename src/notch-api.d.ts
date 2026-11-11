@@ -62,11 +62,22 @@ interface NotchClipItem {
   preview: string;
 }
 
+interface NotchVoiceMember {
+  id: string;
+  name: string;
+  muted: boolean;
+  deafened: boolean;
+  speaking: boolean;
+  self: boolean;
+}
+
 interface NotchVoice {
   inChannel: boolean;
   muted: boolean;
   deafened: boolean;
   speaking: boolean;
+  channel: string;
+  members: NotchVoiceMember[];
 }
 
 interface NotchSettings {
