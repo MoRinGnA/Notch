@@ -42,6 +42,11 @@ interface NotchAudioApp {
   muted: boolean;
 }
 
+interface NotchAudioPeak {
+  pid: number;
+  peak: number;
+}
+
 interface NotchAudioDevice {
   id: string;
   name: string;
@@ -76,6 +81,7 @@ interface Window {
     setVolume: (level: number) => Promise<boolean>;
     setMuted: (muted: boolean) => Promise<boolean>;
     getAudioApps: () => Promise<NotchAudioApp[]>;
+    getAudioPeaks: () => Promise<NotchAudioPeak[]>;
     setAppVolume: (pid: number, level: number) => Promise<boolean>;
     setAppMuted: (pid: number, muted: boolean) => Promise<boolean>;
     getAudioDevice: () => Promise<NotchAudioDevice | null>;

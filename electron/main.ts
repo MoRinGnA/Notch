@@ -1,7 +1,8 @@
 import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, powerMonitor, screen, shell, Tray } from "electron";
-import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { createAudioBridge, type AudioBridge, type AudioDevice } from "./audio-bridge";
 
 // 가사 길이에 따라 노치가 넓어질 수 있도록 창을 넉넉히 둔다.
 const WINDOW_WIDTH = 900;
@@ -293,462 +294,48 @@ interface VolumeState {
   muted: boolean;
 }
 
-// 시스템 기본 출력의 마스터 볼륨. Windows Core Audio(IAudioEndpointVolume)를 C#으로 감싼다.
-// Add-Type 컴파일이 무거워 호출마다 PowerShell을 새로 띄우면 슬라이더가 끊기므로,
-// 한 프로세스를 띄워 두고 stdin/stdout으로 get/set 명령만 주고받는다.
-const VOLUME_AGENT_SCRIPT = `
-Add-Type -TypeDefinition @'
-using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Runtime.InteropServices;
+// 시스템 볼륨과 앱별 세션은 네이티브 사이드카(native/audio)가 담당한다.
+// 사이드카는 앱이 살아 있는 동안 함께 떠 있고, 기본 출력 장치 변경을 이벤트로 알린다.
+let audioBridge: AudioBridge | null = null;
+let audioDevice: AudioDevice | null = null;
 
-namespace NotchAudio {
-  [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
-  internal class MMDeviceEnumerator { }
-
-  [ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-  internal interface IMMDeviceEnumerator {
-    [PreserveSig] int EnumAudioEndpoints(int dataFlow, int stateMask, out IntPtr devices);
-    [PreserveSig] int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice device);
-  }
-
-  [ComImport, Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-  internal interface IMMDevice {
-    [PreserveSig] int Activate(ref Guid iid, int clsCtx, IntPtr activationParams, [MarshalAs(UnmanagedType.IUnknown)] out object instance);
-    [PreserveSig] int OpenPropertyStore(int access, out IntPtr store);
-    [PreserveSig] int GetId(out IntPtr id);
-    [PreserveSig] int GetState(out int state);
-  }
-
-  // 기본 출력 장치에 붙은 앱별 오디오 세션.
-  [ComImport, Guid("77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-  internal interface IAudioSessionManager2 {
-    [PreserveSig] int GetAudioSessionControl(IntPtr sessionGuid, int streamFlags, out IntPtr sessionControl);
-    [PreserveSig] int GetSimpleAudioVolume(IntPtr sessionGuid, int streamFlags, out IntPtr sessionVolume);
-    [PreserveSig] int GetSessionEnumerator(out IAudioSessionEnumerator enumerator);
-    [PreserveSig] int RegisterSessionNotification(IntPtr notify);
-    [PreserveSig] int UnregisterSessionNotification(IntPtr notify);
-    [PreserveSig] int RegisterDuckNotification(IntPtr sessionId, IntPtr notify);
-    [PreserveSig] int UnregisterDuckNotification(IntPtr notify);
-  }
-
-  [ComImport, Guid("E2F5BB11-0570-40CA-ACDD-3AA01277DEE8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-  internal interface IAudioSessionEnumerator {
-    [PreserveSig] int GetCount(out int count);
-    [PreserveSig] int GetSession(int index, out IAudioSessionControl2 control);
-  }
-
-  // 메서드는 vtable 순서대로 채운다. 쓰지 않는 항목도 자리를 지켜야 한다.
-  [ComImport, Guid("F4B1A599-7266-4319-A8CA-E70ACB11E8CD"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-  internal interface IAudioSessionControl {
-    [PreserveSig] int GetState(out int state);
-    [PreserveSig] int GetDisplayName([MarshalAs(UnmanagedType.LPWStr)] out string name);
-    [PreserveSig] int SetDisplayName([MarshalAs(UnmanagedType.LPWStr)] string name, IntPtr context);
-    [PreserveSig] int GetIconPath([MarshalAs(UnmanagedType.LPWStr)] out string path);
-    [PreserveSig] int SetIconPath([MarshalAs(UnmanagedType.LPWStr)] string path, IntPtr context);
-    [PreserveSig] int GetGroupingParam(out Guid grouping);
-    [PreserveSig] int SetGroupingParam(ref Guid grouping, IntPtr context);
-    [PreserveSig] int RegisterAudioSessionNotification(IntPtr notify);
-    [PreserveSig] int UnregisterAudioSessionNotification(IntPtr notify);
-  }
-
-  [ComImport, Guid("BFB7FF88-7239-4FC9-8FA2-07C950BE9C6D"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-  internal interface IAudioSessionControl2 {
-    [PreserveSig] int GetState(out int state);
-    [PreserveSig] int GetDisplayName([MarshalAs(UnmanagedType.LPWStr)] out string name);
-    [PreserveSig] int SetDisplayName([MarshalAs(UnmanagedType.LPWStr)] string name, IntPtr context);
-    [PreserveSig] int GetIconPath([MarshalAs(UnmanagedType.LPWStr)] out string path);
-    [PreserveSig] int SetIconPath([MarshalAs(UnmanagedType.LPWStr)] string path, IntPtr context);
-    [PreserveSig] int GetGroupingParam(out Guid grouping);
-    [PreserveSig] int SetGroupingParam(ref Guid grouping, IntPtr context);
-    [PreserveSig] int RegisterAudioSessionNotification(IntPtr notify);
-    [PreserveSig] int UnregisterAudioSessionNotification(IntPtr notify);
-    [PreserveSig] int GetSessionIdentifier(out IntPtr identifier);
-    [PreserveSig] int GetSessionInstanceIdentifier(out IntPtr identifier);
-    [PreserveSig] int GetProcessId(out uint processId);
-    [PreserveSig] int IsSystemSoundsSession();
-    [PreserveSig] int SetDuckingPreference([MarshalAs(UnmanagedType.Bool)] bool optOut);
-  }
-
-  [ComImport, Guid("87CE5498-68D6-44E5-9215-6DA47EF883D8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-  internal interface ISimpleAudioVolume {
-    [PreserveSig] int SetMasterVolume(float level, Guid context);
-    [PreserveSig] int GetMasterVolume(out float level);
-    [PreserveSig] int SetMute([MarshalAs(UnmanagedType.Bool)] bool mute, Guid context);
-    [PreserveSig] int GetMute([MarshalAs(UnmanagedType.Bool)] out bool mute);
-  }
-
-  // 메서드는 vtable 순서대로 선언해야 한다. 쓰지 않는 채널 관련 항목도 자리를 채운다.
-  [ComImport, Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-  internal interface IAudioEndpointVolume {
-    [PreserveSig] int RegisterControlChangeNotify(IntPtr notify);
-    [PreserveSig] int UnregisterControlChangeNotify(IntPtr notify);
-    [PreserveSig] int GetChannelCount(out uint count);
-    [PreserveSig] int SetMasterVolumeLevel(float levelDb, Guid context);
-    [PreserveSig] int SetMasterVolumeLevelScalar(float level, Guid context);
-    [PreserveSig] int GetMasterVolumeLevel(out float levelDb);
-    [PreserveSig] int GetMasterVolumeLevelScalar(out float level);
-    [PreserveSig] int SetChannelVolumeLevel(uint channel, float levelDb, Guid context);
-    [PreserveSig] int SetChannelVolumeLevelScalar(uint channel, float level, Guid context);
-    [PreserveSig] int GetChannelVolumeLevel(uint channel, out float levelDb);
-    [PreserveSig] int GetChannelVolumeLevelScalar(uint channel, out float level);
-    [PreserveSig] int SetMute([MarshalAs(UnmanagedType.Bool)] bool mute, Guid context);
-    [PreserveSig] int GetMute([MarshalAs(UnmanagedType.Bool)] out bool mute);
-  }
-
-  public static class Master {
-    // 짧은 시간 동안은 기본 출력 객체를 재사용한다(초당 여러 번 읽어도 부담이 없게).
-    private static IAudioEndpointVolume cached;
-    private static DateTime cachedAt = DateTime.MinValue;
-
-    private static void Forget() {
-      cached = null;
-      cachedAt = DateTime.MinValue;
-    }
-
-    private static IAudioEndpointVolume Endpoint() {
-      if (cached != null && (DateTime.UtcNow - cachedAt).TotalSeconds < 5) return cached;
-      var enumerator = (IMMDeviceEnumerator)new MMDeviceEnumerator();
-      IMMDevice device;
-      Marshal.ThrowExceptionForHR(enumerator.GetDefaultAudioEndpoint(0, 1, out device));
-      var iid = typeof(IAudioEndpointVolume).GUID;
-      object instance;
-      Marshal.ThrowExceptionForHR(device.Activate(ref iid, 23, IntPtr.Zero, out instance));
-      cached = (IAudioEndpointVolume)instance;
-      cachedAt = DateTime.UtcNow;
-      return cached;
-    }
-
-    // "레벨;음소거" 한 줄로 답한다(따옴표 이스케이프를 피하려고 JSON 대신 쓴다).
-    public static string Read() {
-      try {
-        var endpoint = Endpoint();
-        float level;
-        bool muted;
-        Marshal.ThrowExceptionForHR(endpoint.GetMasterVolumeLevelScalar(out level));
-        Marshal.ThrowExceptionForHR(endpoint.GetMute(out muted));
-        var percent = (int)Math.Round(Math.Max(0f, Math.Min(1f, level)) * 100f);
-        return percent.ToString() + ";" + (muted ? "1" : "0");
-      } catch {
-        // 출력 기기가 바뀌었으면 다음 호출에서 새 기본 기기를 찾는다.
-        Forget();
-        throw;
-      }
-    }
-
-    public static void Set(int percent) {
-      try {
-        var endpoint = Endpoint();
-        var level = Math.Max(0, Math.Min(100, percent)) / 100f;
-        Marshal.ThrowExceptionForHR(endpoint.SetMasterVolumeLevelScalar(level, Guid.Empty));
-      } catch {
-        Forget();
-        throw;
-      }
-    }
-
-    public static void SetMute(bool muted) {
-      try {
-        var endpoint = Endpoint();
-        Marshal.ThrowExceptionForHR(endpoint.SetMute(muted, Guid.Empty));
-      } catch {
-        Forget();
-        throw;
-      }
-    }
-
-    // 기본 출력 장치의 엔드포인트 ID. 장치가 바뀌었는지 비교하는 데만 쓴다.
-    public static string DeviceId() {
-      var enumerator = (IMMDeviceEnumerator)new MMDeviceEnumerator();
-      IMMDevice device;
-      Marshal.ThrowExceptionForHR(enumerator.GetDefaultAudioEndpoint(0, 1, out device));
-      IntPtr id;
-      Marshal.ThrowExceptionForHR(device.GetId(out id));
-      try { return Marshal.PtrToStringUni(id); } finally { Marshal.FreeCoTaskMem(id); }
-    }
-  }
-
-  // 기본 출력 장치의 오디오 세션 목록과 앱별 음량 제어.
-  // 세션 하나는 "pid;레벨;음소거;이름"이고 세션끼리 '|'로 잇는다(줄바꿈 없이 한 줄로 답하기 위해).
-  public static class Sessions {
-    private static IAudioSessionEnumerator Open() {
-      var enumerator = (IMMDeviceEnumerator)new MMDeviceEnumerator();
-      IMMDevice device;
-      Marshal.ThrowExceptionForHR(enumerator.GetDefaultAudioEndpoint(0, 1, out device));
-      var iid = typeof(IAudioSessionManager2).GUID;
-      object manager;
-      Marshal.ThrowExceptionForHR(device.Activate(ref iid, 23, IntPtr.Zero, out manager));
-      var sessions = (IAudioSessionManager2)manager;
-      IAudioSessionEnumerator list;
-      Marshal.ThrowExceptionForHR(sessions.GetSessionEnumerator(out list));
-      return list;
-    }
-
-    private static string NameOf(uint pid) {
-      try { return Process.GetProcessById((int)pid).ProcessName; } catch { return "app"; }
-    }
-
-    public static string Read() {
-      var parts = new List<string>();
-      var seen = new List<int>();
-      var list = Open();
-      int count;
-      if (list.GetCount(out count) != 0) return "";
-      for (int i = 0; i < count; i++) {
-        IAudioSessionControl2 control;
-        if (list.GetSession(i, out control) != 0 || control == null) continue;
-        try {
-          int state;
-          if (control.GetState(out state) != 0 || state != 1) continue;
-          if (control.IsSystemSoundsSession() == 0) continue;
-          uint pid;
-          if (control.GetProcessId(out pid) != 0 || pid == 0) continue;
-          if (seen.Contains((int)pid)) continue;
-          var volume = control as ISimpleAudioVolume;
-          if (volume == null) continue;
-          float level;
-          bool muted;
-          if (volume.GetMasterVolume(out level) != 0) continue;
-          if (volume.GetMute(out muted) != 0) muted = false;
-          seen.Add((int)pid);
-          var percent = (int)Math.Round(Math.Max(0f, Math.Min(1f, level)) * 100f);
-          parts.Add(pid.ToString() + ";" + percent.ToString() + ";" + (muted ? "1" : "0") + ";" + NameOf(pid));
-        } finally {
-          Marshal.ReleaseComObject(control);
-        }
-      }
-      Marshal.ReleaseComObject(list);
-      return String.Join("|", parts);
-    }
-
-    private static void Apply(uint target, int percent, int mute) {
-      var list = Open();
-      int count;
-      if (list.GetCount(out count) != 0) return;
-      for (int i = 0; i < count; i++) {
-        IAudioSessionControl2 control;
-        if (list.GetSession(i, out control) != 0 || control == null) continue;
-        try {
-          uint pid;
-          if (control.GetProcessId(out pid) != 0 || pid != target) continue;
-          var volume = control as ISimpleAudioVolume;
-          if (volume == null) continue;
-          if (percent >= 0) {
-            var level = Math.Max(0, Math.Min(100, percent)) / 100f;
-            volume.SetMasterVolume(level, Guid.Empty);
-          }
-          if (mute >= 0) volume.SetMute(mute == 1, Guid.Empty);
-        } finally {
-          Marshal.ReleaseComObject(control);
-        }
-      }
-      Marshal.ReleaseComObject(list);
-    }
-
-    public static void Set(int pid, int percent) { Apply((uint)pid, percent, -1); }
-
-    public static void Mute(int pid, bool muted) { Apply((uint)pid, -1, muted ? 1 : 0); }
-  }
-}
-'@
-while ($true) {
-  $line = [Console]::In.ReadLine()
-  if ($null -eq $line) { break }
-  $parts = @($line.Trim() -split '\\s+')
-  $reply = 'err'
-  try {
-    if ($parts[0] -eq 'get') { $reply = [NotchAudio.Master]::Read() }
-    elseif ($parts[0] -eq 'set' -and $parts.Count -ge 2) { [NotchAudio.Master]::Set([int]$parts[1]); $reply = 'ok' }
-    elseif ($parts[0] -eq 'mute' -and $parts.Count -ge 2) { [NotchAudio.Master]::SetMute($parts[1] -eq '1'); $reply = 'ok' }
-    elseif ($parts[0] -eq 'sessions') { $reply = [NotchAudio.Sessions]::Read(); if ($null -eq $reply) { $reply = '' } }
-    elseif ($parts[0] -eq 'sess-set' -and $parts.Count -ge 3) { [NotchAudio.Sessions]::Set([int]$parts[1], [int]$parts[2]); $reply = 'ok' }
-    elseif ($parts[0] -eq 'sess-mute' -and $parts.Count -ge 3) { [NotchAudio.Sessions]::Mute([int]$parts[1], $parts[2] -eq '1'); $reply = 'ok' }
-    elseif ($parts[0] -eq 'device') {
-      $deviceId = ''
-      $deviceName = ''
-      try {
-        $deviceId = [NotchAudio.Master]::DeviceId()
-        if ($deviceId) {
-          $key = $deviceId
-          if ($deviceId -match '\{[0-9a-fA-F-]+\}$') { $key = $matches[0] }
-          $root = 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\MMDevices\\Audio\\Render'
-          $path = Join-Path (Join-Path $root $key) 'Properties'
-          $props = Get-ItemProperty -Path $path -ErrorAction SilentlyContinue
-          if ($null -ne $props) { $deviceName = $props.'{a45c254e-df1c-4efd-8020-67d146a850e0},2' }
-        }
-      } catch { $deviceName = '' }
-      $reply = ($deviceId + ';' + $deviceName)
-    }
-    elseif ($parts[0] -eq 'quit') { [Console]::Out.WriteLine('bye'); [Console]::Out.Flush(); break }
-  } catch { $reply = 'err' }
-  [Console]::Out.WriteLine($reply)
-  [Console]::Out.Flush()
-}
-`;
-
-interface VolumeRequest {
-  done: boolean;
-  timer: NodeJS.Timeout;
-  finish: (error: Error | null, value: string) => void;
+// 개발 중에는 저장소의 빌드 산출물, 패키지에서는 extraResources로 넣은 exe를 쓴다.
+function audioBridgePath(): string {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "notch-audio.exe")
+    : path.join(app.getAppPath(), "native", "audio", "bin", "notch-audio.exe");
 }
 
-let volumeProc: ChildProcessWithoutNullStreams | null = null;
-let volumeBuffer = "";
-let volumeRequests: VolumeRequest[] = [];
-let volumeIdleTimer: NodeJS.Timeout | null = null;
-
-function settleVolumeRequests(error: Error): void {
-  const pending = volumeRequests;
-  volumeRequests = [];
-  for (const request of pending) {
-    if (request.done) continue;
-    request.done = true;
-    clearTimeout(request.timer);
-    request.finish(error, "");
-  }
-}
-
-// 대화가 끊기면 대기 중인 요청을 모두 실패로 정리하고, 다음 호출에서 새로 띄운다.
-function resetVolumeAgent(error: Error): void {
-  const proc = volumeProc;
-  volumeProc = null;
-  volumeBuffer = "";
-  if (proc) {
-    proc.removeAllListeners();
-    proc.stdin.destroy();
-    proc.kill();
-  }
-  settleVolumeRequests(error);
-}
-
-function stopVolumeAgent(): void {
-  if (volumeIdleTimer) {
-    clearTimeout(volumeIdleTimer);
-    volumeIdleTimer = null;
-  }
-  volumeProc = null;
-  volumeBuffer = "";
-  settleVolumeRequests(new Error("volume agent stopped"));
-}
-
-// 노치를 닫고 한동안 볼륨을 만지지 않으면 PowerShell을 정리한다.
-function touchVolumeIdle(): void {
-  if (volumeIdleTimer) clearTimeout(volumeIdleTimer);
-  volumeIdleTimer = setTimeout(() => {
-    volumeIdleTimer = null;
-    if (volumeRequests.length > 0) {
-      touchVolumeIdle();
-      return;
+function getAudioBridge(): AudioBridge {
+  if (audioBridge) return audioBridge;
+  const bridge = createAudioBridge(audioBridgePath());
+  bridge.onDevice((device) => {
+    const previous = audioDevice;
+    audioDevice = device;
+    if (!previous || previous.id === device.id) return;
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send("notch:audio-device", { ...device, previous: previous.name });
     }
-    stopVolumeAgent();
-  }, 60000);
-}
-
-// 스크립트가 커지면 -EncodedCommand는 명령줄 길이 한계(32KB)를 넘는다. 임시 폴더에 .ps1로 두고 -File로 띄운다.
-function writeVolumeAgentScript(): string {
-  const scriptPath = path.join(app.getPath("temp"), "notch-audio-agent.ps1");
-  // PowerShell 5.1은 BOM이 없으면 UTF-8을 ANSI로 읽어 한글 주석에서 깨진다.
-  fs.writeFileSync(scriptPath, `\ufeff${VOLUME_AGENT_SCRIPT}`, "utf8");
-  return scriptPath;
-}
-
-function spawnVolumeAgent(): void {
-  let scriptPath: string;
-  try {
-    scriptPath = writeVolumeAgentScript();
-  } catch (error) {
-    settleVolumeRequests(error as Error);
-    return;
-  }
-  const proc = spawn(
-    "powershell.exe",
-    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
-    { windowsHide: true, stdio: "pipe" },
-  );
-  volumeProc = proc;
-  volumeBuffer = "";
-  proc.stdout.setEncoding("utf8");
-  proc.stdout.on("data", (chunk: string) => {
-    volumeBuffer += chunk;
-    let index = volumeBuffer.indexOf("\n");
-    while (index >= 0) {
-      const line = volumeBuffer.slice(0, index).trim();
-      volumeBuffer = volumeBuffer.slice(index + 1);
-      const request = volumeRequests.shift();
-      if (request && !request.done) {
-        request.done = true;
-        clearTimeout(request.timer);
-        request.finish(null, line);
-      }
-      index = volumeBuffer.indexOf("\n");
-    }
-    touchVolumeIdle();
   });
-  proc.on("error", (error) => {
-    if (volumeProc === proc) resetVolumeAgent(error as Error);
-  });
-  proc.on("exit", (code) => {
-    if (volumeProc !== proc) return;
-    volumeProc = null;
-    volumeBuffer = "";
-    settleVolumeRequests(new Error(`volume agent exited (${code})`));
-  });
-  touchVolumeIdle();
-}
-
-function volumeCommand(command: string): Promise<string> {
-  if (process.platform !== "win32") return Promise.reject(new Error("unsupported platform"));
-  if (!volumeProc) spawnVolumeAgent();
-  const proc = volumeProc;
-  if (!proc) return Promise.reject(new Error("volume agent unavailable"));
-  return new Promise((resolve, reject) => {
-    const request: VolumeRequest = {
-      done: false,
-      // 첫 호출은 Add-Type 컴파일 때문에 느리다.
-      timer: setTimeout(() => {
-        if (request.done) return;
-        request.done = true;
-        // 응답을 놓치면 이후 응답이 한 칸씩 밀리므로 대화를 새로 시작한다.
-        resetVolumeAgent(new Error("volume agent timeout"));
-        reject(new Error("volume agent timeout"));
-      }, 5000),
-      finish: (error, value) => (error ? reject(error) : resolve(value)),
-    };
-    volumeRequests.push(request);
-    proc.stdin.write(`${command}\n`);
-  });
+  audioBridge = bridge;
+  return bridge;
 }
 
 ipcMain.handle("notch:volume", async (): Promise<VolumeState | null> => {
-  if (process.platform !== "win32") return null;
-  try {
-    const [level, muted] = (await volumeCommand("get")).split(";");
-    const parsed = Number.parseInt(level, 10);
-    if (!Number.isFinite(parsed)) return null;
-    return { level: Math.max(0, Math.min(100, parsed)), muted: muted === "1" };
-  } catch {
-    return null;
-  }
+  const state = await getAudioBridge().state();
+  if (!state) return null;
+  if (state.device) audioDevice = state.device;
+  return { level: state.level, muted: state.muted };
 });
 
 ipcMain.handle("notch:volume-set", async (_event, level: unknown): Promise<boolean> => {
   if (typeof level !== "number" || !Number.isFinite(level)) return false;
-  const clamped = Math.max(0, Math.min(100, Math.round(level)));
-  try {
-    return (await volumeCommand(`set ${clamped}`)) === "ok";
-  } catch {
-    return false;
-  }
+  return getAudioBridge().setMasterLevel(level);
 });
 
 ipcMain.handle("notch:volume-mute", async (_event, muted: unknown): Promise<boolean> => {
   if (typeof muted !== "boolean") return false;
-  try {
-    return (await volumeCommand(`mute ${muted ? 1 : 0}`)) === "ok";
-  } catch {
-    return false;
-  }
+  return getAudioBridge().setMasterMuted(muted);
 });
 
 // 기본 출력 장치에서 소리를 내는 앱 하나.
@@ -759,57 +346,28 @@ interface AudioApp {
   muted: boolean;
 }
 
-interface AudioDevice {
-  id: string;
-  name: string;
-}
-
-// 도우미는 세션을 "pid;레벨;음소거;이름"으로 잇고 세션끼리 '|'로 구분해 한 줄로 답한다.
-function parseAudioApps(reply: string): AudioApp[] {
-  const apps: AudioApp[] = [];
-  for (const entry of reply.split("|")) {
-    const fields = entry.split(";");
-    if (fields.length < 4) continue;
-    const pid = Number.parseInt(fields[0], 10);
-    const level = Number.parseInt(fields[1], 10);
-    if (!Number.isFinite(pid) || pid <= 0) continue;
-    apps.push({
-      pid,
-      level: Number.isFinite(level) ? Math.max(0, Math.min(100, level)) : 0,
-      muted: fields[2] === "1",
-      name: fields.slice(3).join(";").trim() || "app",
-    });
-  }
-  return apps;
-}
-
 ipcMain.handle("notch:audio-apps", async (): Promise<AudioApp[]> => {
   if (process.platform !== "win32") return [];
-  try {
-    return parseAudioApps(await volumeCommand("sessions"));
-  } catch {
-    return [];
-  }
+  const apps = await getAudioBridge().apps();
+  return apps.map(({ pid, name, level, muted }) => ({ pid, name, level, muted }));
+});
+
+// SOUND 화면의 미터용. 앱 목록보다 자주 부르므로 가벼운 명령만 쓴다.
+ipcMain.handle("notch:audio-peaks", async (): Promise<{ pid: number; peak: number }[]> => {
+  if (process.platform !== "win32") return [];
+  return getAudioBridge().peaks();
 });
 
 ipcMain.handle("notch:audio-app-set", async (_event, pid: unknown, level: unknown): Promise<boolean> => {
   if (typeof pid !== "number" || typeof level !== "number") return false;
   if (!Number.isFinite(pid) || !Number.isFinite(level)) return false;
-  try {
-    return (await volumeCommand(`sess-set ${Math.round(pid)} ${Math.max(0, Math.min(100, Math.round(level)))}`)) === "ok";
-  } catch {
-    return false;
-  }
+  return getAudioBridge().setAppLevel(pid, level);
 });
 
 ipcMain.handle("notch:audio-app-mute", async (_event, pid: unknown, muted: unknown): Promise<boolean> => {
   if (typeof pid !== "number" || typeof muted !== "boolean") return false;
   if (!Number.isFinite(pid)) return false;
-  try {
-    return (await volumeCommand(`sess-mute ${Math.round(pid)} ${muted ? 1 : 0}`)) === "ok";
-  } catch {
-    return false;
-  }
+  return getAudioBridge().setAppMuted(pid, muted);
 });
 
 ipcMain.handle("notch:sound-settings", (): boolean => {
@@ -817,50 +375,11 @@ ipcMain.handle("notch:sound-settings", (): boolean => {
   return true;
 });
 
-// 기본 출력 장치. 장치가 바뀌었는지 비교하고 이름을 알리는 데만 쓴다.
-let audioDevice: AudioDevice | null = null;
-let deviceCheckTimer: NodeJS.Timeout | null = null;
-
-async function readAudioDevice(): Promise<AudioDevice | null> {
-  try {
-    const reply = await volumeCommand("device");
-    const index = reply.indexOf(";");
-    const id = (index >= 0 ? reply.slice(0, index) : reply).trim();
-    if (!id) return null;
-    return { id, name: index >= 0 ? reply.slice(index + 1).trim() : "" };
-  } catch {
-    return null;
-  }
-}
-
-// 첫 확인은 조용히 기준만 잡고, 이후 장치가 바뀌면 펼친 화면에 짧게 알린다.
-async function refreshAudioDevice(): Promise<void> {
-  const next = await readAudioDevice();
-  if (!next) return;
-  const previous = audioDevice;
-  audioDevice = next;
-  if (!previous || previous.id === next.id) return;
-  for (const win of BrowserWindow.getAllWindows()) {
-    win.webContents.send("notch:audio-device", {
-      id: next.id,
-      name: next.name || "출력 장치",
-      previous: previous.name,
-    });
-  }
-}
-
-// 장치 변경 메시지는 여러 번 몰려 오므로 잠깐 묶어 한 번만 확인한다.
-function scheduleAudioDeviceCheck(): void {
-  if (deviceCheckTimer) return;
-  deviceCheckTimer = setTimeout(() => {
-    deviceCheckTimer = null;
-    void refreshAudioDevice();
-  }, 700);
-}
-
-// 시작할 때 읽지 못했으면 믹서를 열 때 한 번 더 시도한다.
 ipcMain.handle("notch:audio-device", async (): Promise<AudioDevice | null> => {
-  if (!audioDevice) audioDevice = await readAudioDevice();
+  if (!audioDevice) {
+    const state = await getAudioBridge().state();
+    if (state?.device) audioDevice = state.device;
+  }
   return audioDevice;
 });
 
@@ -1224,6 +743,10 @@ function buildTrayMenu(): Menu {
       checked: settings.hideOnFullscreen,
       click: (item) => saveSettings({ hideOnFullscreen: item.checked }),
     },
+    {
+      label: "독점 전체화면 게임 위 표시는 지원하지 않음",
+      enabled: false,
+    },
     { type: "separator" },
     {
       label: "펼침 단축키",
@@ -1291,8 +814,12 @@ interface NotchSettings {
 const DEFAULT_SETTINGS: NotchSettings = {
   hoverOpen: true,
   toggleShortcut: TOGGLE_ACCELERATOR,
-  hideOnFullscreen: true,
+  hideOnFullscreen: false,
 };
+
+// 전체화면 숨김은 기본값에서 opt-in으로 바뀌었다. 구버전 설정 파일은
+// 기본값을 저장한 것인지 사용자가 직접 켠 것인지 구별할 수 없으므로 한 번만 표시 우선으로 옮긴다.
+const SETTINGS_VERSION = 1;
 
 // 설정은 실행 파일과 분리된 사용자 폴더에 두고, 없으면 기본값으로 만든다.
 // 개발 실행과 포장 빌드가 같은 파일을 보도록 앱 이름 대신 고정 폴더를 쓴다.
@@ -1304,22 +831,31 @@ function readSettings(): NotchSettings {
   if (!fs.existsSync(settingsFile())) {
     try {
       fs.mkdirSync(path.dirname(settingsFile()), { recursive: true });
-      fs.writeFileSync(settingsFile(), JSON.stringify(DEFAULT_SETTINGS, null, 2) + "\n", "utf8");
+      fs.writeFileSync(
+        settingsFile(),
+        JSON.stringify({ ...DEFAULT_SETTINGS, settingsVersion: SETTINGS_VERSION }, null, 2) + "\n",
+        "utf8",
+      );
     } catch (error) {
       console.warn("설정 파일을 만들지 못했습니다:", error);
     }
     return DEFAULT_SETTINGS;
   }
   try {
-    const raw = JSON.parse(fs.readFileSync(settingsFile(), "utf8")) as Partial<NotchSettings>;
-    // 값이 깨졌거나 빠진 항목은 기본값으로 채운다.
-    return {
+    const raw = JSON.parse(fs.readFileSync(settingsFile(), "utf8")) as Partial<NotchSettings> & { settingsVersion?: number };
+    const isLegacy = raw.settingsVersion !== SETTINGS_VERSION;
+    // 값이 깨졌거나 빠진 항목은 기본값으로 채운다. 구버전의 숨김 기본값은 opt-in 정책으로 마이그레이션한다.
+    const migrated: NotchSettings = {
       hoverOpen: typeof raw.hoverOpen === "boolean" ? raw.hoverOpen : DEFAULT_SETTINGS.hoverOpen,
       toggleShortcut:
         typeof raw.toggleShortcut === "string" ? raw.toggleShortcut.trim() : DEFAULT_SETTINGS.toggleShortcut,
-      hideOnFullscreen:
-        typeof raw.hideOnFullscreen === "boolean" ? raw.hideOnFullscreen : DEFAULT_SETTINGS.hideOnFullscreen,
+      hideOnFullscreen: isLegacy
+        ? DEFAULT_SETTINGS.hideOnFullscreen
+        : typeof raw.hideOnFullscreen === "boolean" ? raw.hideOnFullscreen : DEFAULT_SETTINGS.hideOnFullscreen,
     };
+    // 옮긴 값을 한 번은 파일에 남겨, 다음 실행부터는 사용자가 고른 값과 화면 동작이 어긋나지 않게 한다.
+    if (isLegacy) writeJsonFile(settingsFile(), { ...migrated, settingsVersion: SETTINGS_VERSION }, "설정을 옮기지 못했습니다:");
+    return migrated;
   } catch (error) {
     console.warn("설정 파일을 읽지 못해 기본값을 씁니다:", error);
     return DEFAULT_SETTINGS;
@@ -1360,7 +896,7 @@ function writeJsonFile(file: string, value: unknown, failure: string): void {
 // 트레이 메뉴에서 바꾸면 파일에 저장하고 바로 적용한다.
 function saveSettings(patch: Partial<NotchSettings>): void {
   const next = { ...settings, ...patch };
-  writeJsonFile(settingsFile(), next, "설정을 저장하지 못했습니다:");
+  writeJsonFile(settingsFile(), { ...next, settingsVersion: SETTINGS_VERSION }, "설정을 저장하지 못했습니다:");
   applySettings();
 }
 
@@ -1452,8 +988,6 @@ function createWindow(): void {
 
   win.setAlwaysOnTop(true, "screen-saver");
   notchWindow = win;
-  // 헤드폰을 빼거나 기기를 연결하면 Windows가 모든 최상위 창에 알린다(WM_DEVICECHANGE).
-  if (process.platform === "win32") win.hookWindowMessage(0x0219, () => scheduleAudioDeviceCheck());
   win.on("closed", () => {
     if (fullscreenTimer) clearInterval(fullscreenTimer);
     fullscreenTimer = null;
@@ -1480,8 +1014,12 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   void app.whenReady().then(() => {
-    // 시작할 때 기본 출력 장치를 조용히 기억해 둔다.
-    void refreshAudioDevice();
+    // 사이드카를 먼저 띄워 두면 기본 출력 장치 변경을 이벤트로 받을 수 있다.
+    const audio = getAudioBridge();
+    audio.start();
+    void audio.state().then((state) => {
+      if (state?.device) audioDevice = state.device;
+    });
     const notifyPowerChange = (onBattery: boolean) => {
       for (const win of BrowserWindow.getAllWindows()) {
         win.webContents.send("notch:power-change", onBattery);
@@ -1509,11 +1047,8 @@ if (!app.requestSingleInstanceLock()) {
 
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
-  if (volumeProc) {
-    volumeProc.stdin.end();
-    volumeProc.kill();
-    volumeProc = null;
-  }
+  audioBridge?.dispose();
+  audioBridge = null;
 });
 
 app.on("window-all-closed", () => {

@@ -1070,6 +1070,7 @@ body,
 }
 
 .notch-mix-row {
+  position: relative;
   flex: none;
   display: grid;
   /* 앱 이름은 고정폭, 레일은 남는 폭을 채워 값과 스위치를 오른쪽에 맞춘다. */
@@ -1113,6 +1114,23 @@ body,
 
 .notch-mix-track {
   width: 100%;
+}
+
+/* 앱 줄 아래에 깔리는 활동량 막대. 채움과 같은 포인트 컬러를 낮은 밝기로만 쓴다. */
+.notch-mix-peak {
+  position: absolute;
+  left: 0;
+  bottom: -4px;
+  height: 1px;
+  max-width: 100%;
+  background: var(--vol-accent);
+  opacity: 0.45;
+  pointer-events: none;
+  transition: width 110ms linear;
+}
+
+.notch-mix-row.is-muted .notch-mix-peak {
+  opacity: 0.18;
 }
 
 .notch-mix-empty {

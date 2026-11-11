@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld("notchApi", {
   setMuted: (muted: boolean) => ipcRenderer.invoke("notch:volume-mute", muted) as Promise<boolean>,
   getAudioApps: () =>
     ipcRenderer.invoke("notch:audio-apps") as Promise<{ pid: number; name: string; level: number; muted: boolean }[]>,
+  getAudioPeaks: () => ipcRenderer.invoke("notch:audio-peaks") as Promise<{ pid: number; peak: number }[]>,
   setAppVolume: (pid: number, level: number) => ipcRenderer.invoke("notch:audio-app-set", pid, level) as Promise<boolean>,
   setAppMuted: (pid: number, muted: boolean) => ipcRenderer.invoke("notch:audio-app-mute", pid, muted) as Promise<boolean>,
   getAudioDevice: () => ipcRenderer.invoke("notch:audio-device") as Promise<{ id: string; name: string } | null>,

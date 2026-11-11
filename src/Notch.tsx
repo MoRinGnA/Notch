@@ -758,6 +758,7 @@ function MixRow({
   muted,
   master = false,
   unavailable = false,
+  peak,
   onLevel,
   onMute,
   onBusy,
@@ -767,6 +768,8 @@ function MixRow({
   muted: boolean;
   master?: boolean;
   unavailable?: boolean;
+  // 0~1 사이의 순간 피크. 넘기지 않으면 미터를 그리지 않는다(MASTER 줄).
+  peak?: number;
   onLevel: (level: number) => void;
   onMute: (muted: boolean) => void;
   onBusy: (busy: boolean) => void;
@@ -832,6 +835,13 @@ function MixRow({
       onClick={(event) => event.stopPropagation()}
     >
       <span className="notch-mix-name" title={label}>{label}</span>
+      {peak === undefined ? null : (
+        <span
+          className="notch-mix-peak"
+          aria-hidden="true"
+          style={{ width: `${Math.round(Math.max(0, Math.min(1, peak)) * 100)}%` }}
+        />
+      )}
       <span
         ref={trackRef}
         className="notch-vol-track notch-mix-track"
@@ -884,12 +894,16 @@ function MixRow({
 }
 
 const MIX_POLL_MS = 800;
+// 미터는 눈으로 읽히는 속도만 필요하다. 세션 피크만 읽는 가벼운 명령을 쓴다.
+const PEAK_POLL_MS = 120;
 
 // 앱별 볼륨 화면. 기본 출력 장치에서 실제로 소리를 내는 세션만 보여준다.
 function SoundMixer({ active, onClose }: { active: boolean; onClose: () => void }) {
   const [apps, setApps] = useState<NotchAudioApp[]>([]);
   const [master, setMaster] = useState<NotchVolume | null>(null);
   const [device, setDevice] = useState("");
+  // pid별로 다듬은 피크 값. 사이드카는 순간값만 주므로 여기서 조금씩 놓아준다.
+  const [peaks, setPeaks] = useState<Record<number, number>>({});
   // 끌고 있는 동안 폴링 결과가 손가락 위치를 덮지 않게 한다.
   const busyRef = useRef(false);
   const requestRef = useRef(0);
@@ -925,6 +939,36 @@ function SoundMixer({ active, onClose }: { active: boolean; onClose: () => void 
     return () => {
       cancelled = true;
       requestRef.current++;
+      window.clearInterval(id);
+    };
+  }, [active]);
+
+  // 미터: 화면이 열려 있는 동안만 짧은 간격으로 피크만 읽는다.
+  useEffect(() => {
+    if (!active) return;
+    const api = window.notchApi;
+    if (!api) return;
+    let cancelled = false;
+    const read = async () => {
+      try {
+        const list = await api.getAudioPeaks();
+        if (cancelled) return;
+        setPeaks((previous) => {
+          const next: Record<number, number> = {};
+          for (const { pid, peak } of list) {
+            // 떨어질 때 바로 0이 되지 않게 직전 값의 일부를 남긴다.
+            next[pid] = Math.max(peak, (previous[pid] ?? 0) * 0.68);
+          }
+          return next;
+        });
+      } catch {
+        // 읽지 못하면 다음 간격에 다시 시도한다.
+      }
+    };
+    void read();
+    const id = window.setInterval(read, PEAK_POLL_MS);
+    return () => {
+      cancelled = true;
       window.clearInterval(id);
     };
   }, [active]);
@@ -1002,6 +1046,7 @@ function SoundMixer({ active, onClose }: { active: boolean; onClose: () => void 
               label={app.name.toUpperCase()}
               level={app.level}
               muted={app.muted}
+              peak={peaks[app.pid] ?? 0}
               onLevel={(level) => setLevel(app.pid, level)}
               onMute={(muted) => setMute(app.pid, muted)}
               onBusy={(busy) => {

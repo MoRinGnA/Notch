@@ -14,3 +14,6 @@ release
 # 네이티브 빌드 산출물
 native/target/
 native/*.node
+
+# 오디오 사이드카 빌드 산출물
+native/audio/bin/
