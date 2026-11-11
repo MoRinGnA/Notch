@@ -1082,6 +1082,145 @@ function SoundMixer({ active, onClose }: { active: boolean; onClose: () => void 
   );
 }
 
+const CLIP_POLL_MS = 1000;
+// 목록은 메인 프로세스가 메모리에만 들고 있다(디스크 저장 없음).
+const CLIP_LIMIT_LABEL = "20";
+
+// 클립보드 기록 화면. 항목을 누르면 그 내용이 다시 클립보드로 들어간다.
+// 마이크 상태는 작은 채움 아이콘으로 보여준다. 아이콘 자체가 포인트 컬러라
+// 검정 본체 위에서도 밝고, 말하는 동안에만 오른쪽 음파가 점등된다.
+function MicStatus({ voice, inline = false }: { voice: NotchVoice; inline?: boolean }) {
+  const label = voice.muted ? "마이크 음소거" : voice.speaking ? "말하는 중" : "마이크 켜짐";
+  return (
+    <span
+      className={`notch-mic${inline ? " is-inline" : ""}${voice.muted ? " is-muted" : ""}${voice.speaking && !voice.muted ? " is-speaking" : ""}`}
+      role="img"
+      aria-label={label}
+      title={label}
+    >
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect className="notch-mic-body" x="9" y="2.5" width="6" height="11" rx="3" />
+        <path className="notch-mic-arc" d="M6 11a6 6 0 0 0 12 0M12 17v3.5M9 20.5h6" />
+        {voice.muted && <path className="notch-mic-slash" d="M3.5 3.5l17 17" />}
+        {voice.speaking && !voice.muted && (
+          <>
+            <path className="notch-mic-wave is-near" d="M18.5 8.5a4.6 4.6 0 0 1 0 7" />
+            <path className="notch-mic-wave is-far" d="M21.2 6a8.2 8.2 0 0 1 0 12" />
+          </>
+        )}
+      </svg>
+    </span>
+  );
+}
+
+function ClipShelf({ active, onClose }: { active: boolean; onClose: () => void }) {
+  const [items, setItems] = useState<NotchClipItem[]>([]);
+  // 방금 복사한 항목에만 잠깐 COPIED를 보여 준다.
+  const [doneId, setDoneId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!active) return;
+    const api = window.notchApi;
+    if (!api) return;
+    let cancelled = false;
+    const read = () => {
+      void api
+        .getClipboardItems()
+        .then((list) => {
+          if (!cancelled) setItems(list);
+        })
+        .catch(() => undefined);
+    };
+    read();
+    const id = window.setInterval(read, CLIP_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [active]);
+
+  useEffect(() => {
+    if (doneId === null) return;
+    const id = window.setTimeout(() => setDoneId(null), 1200);
+    return () => window.clearTimeout(id);
+  }, [doneId]);
+
+  const copy = (item: NotchClipItem) => {
+    void window.notchApi
+      ?.copyClipboardItem(item.id)
+      .then((ok) => {
+        if (!ok) return;
+        setDoneId(item.id);
+        // 고른 항목이 맨 위로 오도록 목록을 바로 다시 읽는다.
+        void window.notchApi?.getClipboardItems().then(setItems).catch(() => undefined);
+      })
+      .catch(() => undefined);
+  };
+
+  const clear = () => {
+    void window.notchApi
+      ?.clearClipboard()
+      .then(() => setItems([]))
+      .catch(() => undefined);
+  };
+
+  return (
+    <div className="notch-clip" onClick={(event) => event.stopPropagation()}>
+      <span className="notch-clip-head">
+        <span className="notch-clip-title">CLIPBOARD</span>
+        <span className="notch-clip-count">
+          {String(items.length).padStart(2, "0")} / {CLIP_LIMIT_LABEL}
+        </span>
+      </span>
+      <div className="notch-clip-list">
+        {items.length === 0 ? (
+          <span className="notch-clip-empty">복사한 텍스트가 없습니다.</span>
+        ) : (
+          items.map((item, index) => (
+            <button
+              key={item.id}
+              type="button"
+              className={`notch-clip-row${doneId === item.id ? " is-done" : ""}`}
+              title={item.preview}
+              onClick={(event) => {
+                event.stopPropagation();
+                copy(item);
+              }}
+            >
+              <span className="notch-clip-index">{String(index + 1).padStart(2, "0")}</span>
+              <span className="notch-clip-text">{item.preview || "(빈 내용)"}</span>
+              <span className="notch-clip-act">{doneId === item.id ? "COPIED" : "COPY"}</span>
+            </button>
+          ))
+        )}
+      </div>
+      <span className="notch-clip-foot">
+        <button
+          type="button"
+          className="notch-btn"
+          onClick={(event) => {
+            event.stopPropagation();
+            onClose();
+          }}
+        >
+          BACK
+        </button>
+        <button
+          type="button"
+          className="notch-btn"
+          disabled={items.length === 0}
+          onClick={(event) => {
+            event.stopPropagation();
+            clear();
+          }}
+        >
+          CLEAR
+        </button>
+      </span>
+    </div>
+  );
+}
+
 export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchProps) {
   const notchRef = useRef<HTMLDivElement>(null);
   // 접힌 미디어 행: 곡 정보(왼쪽)와 현재 가사(오른쪽)
@@ -1356,12 +1495,43 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
   const [weather, setWeather] = useState<{ tempC: number; kind: string; city: string } | null>(null);
   // 앱별 볼륨 화면. 펼친 패널 내용만 바꾸고, 접으면 닫힌다.
   const [mixOpen, setMixOpen] = useState(false);
+  // 클립보드 기록 화면. 같은 방식으로 펼친 패널 내용만 바꾼다.
+  const [clipOpen, setClipOpen] = useState(false);
+  // 두 화면은 같은 자리를 쓰므로 하나를 열면 다른 하나는 닫는다.
+  const openClip = () => {
+    setMixOpen(false);
+    setClipOpen(true);
+  };
+  const openMix = () => {
+    setClipOpen(false);
+    setMixOpen(true);
+  };
   // 출력 장치가 바뀌면 잠깐 알린다(접힌 동안에는 OUT 배지로만).
   const [deviceNote, setDeviceNote] = useState<NotchAudioDeviceChange | null>(null);
+  useEffect(() => {
+    if (!expanded) {
+      setMixOpen(false);
+      setClipOpen(false);
+    }
+  }, [expanded]);
+
+  // Discord 음성 상태. 음성 채널에 들어가 있을 때만 접힌 노치 오른쪽에 표시한다.
+  const [voice, setVoice] = useState<NotchVoice | null>(null);
 
   useEffect(() => {
-    if (!expanded) setMixOpen(false);
-  }, [expanded]);
+    const api = window.notchApi;
+    if (!api) return;
+    let cancelled = false;
+    // IPC 구독 전 이미 도착한 READY/채널 이벤트를 놓치지 않도록 최신 상태를 먼저 읽는다.
+    void api.getVoiceState().then((current) => {
+      if (!cancelled && current) setVoice(current);
+    }).catch(() => undefined);
+    const unsubscribe = api.onVoice((next) => setVoice(next));
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     return window.notchApi?.onAudioDevice((change) => setDeviceNote(change));
@@ -1457,8 +1627,11 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
       ? "OUT"
       : "";
   // 미디어 패널에서는 중복되는 NOTCH 문구를 숨기고 전원 상태만 표시한다.
+  // 음성 채널에 있을 때는 오른쪽 자리를 마이크 표시에 내준다.
+  const voiceActive = !!voice?.inChannel;
+  const showMic = !expanded && voiceActive;
   const footerText =
-    expanded && view === "media" && !(battery?.hasBattery && (battery.charging || lowBattery))
+    showMic || (expanded && view === "media" && !(battery?.hasBattery && (battery.charging || lowBattery)))
       ? ""
       : footerLabel;
   const progress = media.duration > 0 ? Math.min(1, Math.max(0, livePosition / media.duration)) : 0;
@@ -1564,7 +1737,7 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
 
   // HUD는 미디어 가사 폭을 물려받지 않고 기본 폭으로 돌아온다.
   const notchWidth = expanded
-    ? mixOpen
+    ? mixOpen || clipOpen
       ? EXPANDED_WIDTH
       : view === "media" && hasSynced && widestLyric
         ? expandedWidth ?? EXPANDED_WIDTH
@@ -1586,7 +1759,7 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
       ref={notchRef}
       role="button"
       tabIndex={0}
-      className={`notch ${expanded ? "is-expanded" : "is-collapsed"}${view === "media" ? " has-media" : ""}${mixOpen ? " has-mix" : ""}${media.status === "Playing" ? " is-playing" : ""}${!expanded && collapsedBadge ? " has-status" : ""}`}
+      className={`notch ${expanded ? "is-expanded" : "is-collapsed"}${view === "media" ? " has-media" : ""}${mixOpen ? " has-mix" : ""}${media.status === "Playing" ? " is-playing" : ""}${!expanded && collapsedBadge ? " has-status" : ""}${showMic ? " has-voice" : ""}`}
       style={{
         ...(notchWidth ? { width: `${notchWidth}px` } : {}),
         "--media-accent": mediaAccent,
@@ -1637,6 +1810,7 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
         </span>
       )}
       {footerText && <span className={`notch-title${lowBattery ? " is-low" : ""}`}>{footerText}</span>}
+      {showMic && voice && <MicStatus voice={voice} />}
       {collapsedBadge === "bolt" ? (
         <span className="notch-bolt" aria-label="충전 중" />
       ) : collapsedBadge ? (
@@ -1660,7 +1834,9 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
               </button>
             </span>
           )}
-          {mixOpen ? (
+          {clipOpen ? (
+            <ClipShelf active={expanded} onClose={() => setClipOpen(false)} />
+          ) : mixOpen ? (
             <SoundMixer active={expanded} onClose={() => setMixOpen(false)} />
           ) : view === "hud" ? (
           <div className="notch-hud">
@@ -1684,8 +1860,21 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
               <span className="notch-hud-readings">
                 <span className={`notch-hud-thermal${tempHot ? " is-hot" : ""}`}>{`TEMP ${hudTemp}°C`}</span>
                 {battery && !battery.hasBattery && <span>{`GPU ${hudGpu}%`}</span>}
+                <button
+                  type="button"
+                  className="notch-clip-open"
+                  title="클립보드 기록 열기"
+                  aria-label="클립보드 기록 열기"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    openClip();
+                  }}
+                >
+                  CLIP
+                </button>
+                {voiceActive && voice && <MicStatus voice={voice} inline />}
               </span>
-              <VolumeDeck active={expanded} onOpenMixer={() => setMixOpen(true)} />
+              <VolumeDeck active={expanded} onOpenMixer={openMix} />
             </span>
           </div>
         ) : (
@@ -1761,6 +1950,21 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
           <span ref={lineMeasureRef} className="notch-line-measure" aria-hidden="true">{widestLyric}</span>
         )}
         <div className="notch-controls">
+          <span className="notch-controls-tools">
+          <button
+            type="button"
+            className="notch-clip-open"
+            title="클립보드 기록 열기"
+            aria-label="클립보드 기록 열기"
+            onClick={(event) => {
+              event.stopPropagation();
+              openClip();
+            }}
+          >
+            CLIP
+          </button>
+          {voiceActive && voice && <MicStatus voice={voice} inline />}
+          </span>
           <span className="notch-controls-group">
             <button type="button" className="notch-btn" onClick={control("Previous")} disabled={playPending || !media.canPrev} aria-label="이전">
               PREV
@@ -1772,7 +1976,7 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
               NEXT
             </button>
           </span>
-          <VolumeDeck active={expanded} onOpenMixer={() => setMixOpen(true)} />
+          <VolumeDeck active={expanded} onOpenMixer={openMix} />
         </div>
           </>
         )}

@@ -1,16 +1,18 @@
-import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, powerMonitor, screen, shell, Tray } from "electron";
+import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, Menu, nativeImage, powerMonitor, screen, shell, Tray } from "electron";
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { createAudioBridge, type AudioBridge, type AudioDevice } from "./audio-bridge";
+import { createDiscordBridge, type DiscordBridge, type DiscordVoice } from "./discord-bridge";
 
 // 가사 길이에 따라 노치가 넓어질 수 있도록 창을 넉넉히 둔다.
 const WINDOW_WIDTH = 900;
 // 펼친 미디어/HUD 패널에 필요한 세로 크기.
 const WINDOW_HEIGHT = 340;
 
-// CPU 온도는 LibreHardwareMonitor/OpenHardwareMonitor가 실행 중이면 그 CPU 센서를 먼저 쓰고,
-// 없으면 Windows 열 구역(thermal zone) 중 가장 높은 값을 쓴다. 없으면 null.
+// CPU 온도는 LibreHardwareMonitor/OpenHardwareMonitor의 CPU 센서를 먼저 쓴다.
+// 없으면 성능 카운터의 정밀 온도(0.1K), 일반 온도(K), 마지막으로 ACPI WMI(0.1K)를 시도한다.
+// Windows 열 구역은 CPU 다이 온도가 아닐 수 있으므로 말이 되는 범위의 가장 높은 값만 쓴다.
 const TEMP_SCRIPT = `
 $ErrorActionPreference = 'SilentlyContinue'
 function Read-Sensor($ns) {
@@ -25,11 +27,35 @@ function Read-Sensor($ns) {
 $value = Read-Sensor 'root/LibreHardwareMonitor'
 if ($null -eq $value) { $value = Read-Sensor 'root/OpenHardwareMonitor' }
 if ($null -eq $value) {
-  $zones = @(Get-CimInstance -ClassName Win32_PerfFormattedData_Counters_ThermalZoneInformation -ErrorAction SilentlyContinue)
-  $temps = @($zones | ForEach-Object { ([double]$_.HighPrecisionTemperature / 10) - 273.15 } | Where-Object { $_ -ge 15 -and $_ -le 115 })
-  if ($temps.Count -gt 0) { $value = ($temps | Measure-Object -Maximum).Maximum }
+  try {
+    $zones = @(Get-CimInstance -ClassName Win32_PerfFormattedData_Counters_ThermalZoneInformation -ErrorAction Stop)
+    $temps = @($zones | ForEach-Object {
+      $celsius = $null
+      $precise = 0.0
+      if ([double]::TryParse([string]$_.HighPrecisionTemperature, [ref]$precise) -and $precise -gt 0) {
+        $celsius = ($precise / 10.0) - 273.15
+      }
+      if (($null -eq $celsius -or $celsius -lt 15 -or $celsius -gt 115) -and [double]$_.Temperature -gt 0) {
+        $celsius = [double]$_.Temperature - 273.15
+      }
+      if ($null -ne $celsius -and $celsius -ge 15 -and $celsius -le 115) {
+        [pscustomobject]@{ Name = [string]$_.Name; Celsius = $celsius }
+      }
+    })
+    # CPU 명시 존이 있으면 우선하고, 이름을 알 수 없으면 보고된 열 구역 중 가장 높은 값.
+    $cpuTemps = @($temps | Where-Object { $_.Name -match 'CPUZ|TSZ0|TZ00|TZ01|THRM' })
+    if ($cpuTemps.Count -gt 0) { $temps = $cpuTemps }
+    if ($temps.Count -gt 0) { $value = ($temps | Measure-Object -Property Celsius -Maximum).Maximum }
+  } catch { }
 }
-if ($null -eq $value) { 'null' } else { [Math]::Round($value, 1).ToString([System.Globalization.CultureInfo]::InvariantCulture) }
+if ($null -eq $value) {
+  try {
+    $zones = @(Get-CimInstance -Namespace 'root/wmi' -ClassName MSAcpi_ThermalZoneTemperature -ErrorAction Stop)
+    $temps = @($zones | Where-Object { $_.Active -ne $false -and [double]$_.CurrentTemperature -gt 0 } | ForEach-Object { ([double]$_.CurrentTemperature / 10.0) - 273.15 } | Where-Object { $_ -ge 15 -and $_ -le 115 })
+    if ($temps.Count -gt 0) { $value = ($temps | Measure-Object -Maximum).Maximum }
+  } catch { }
+}
+if ($null -eq $value) { 'null' } else { [Math]::Round([double]$value, 1).ToString([System.Globalization.CultureInfo]::InvariantCulture) }
 `;
 
 // HUD가 5초 간격으로 물어보므로 짧게 캐시해 PowerShell을 덜 띄운다.
@@ -43,10 +69,10 @@ ipcMain.handle("notch:temp", async (): Promise<number | null> => {
     const value = Number.parseFloat((await runPowerShell(TEMP_SCRIPT)).trim());
     const result = Number.isFinite(value) && value > 0 && value < 150 ? value : null;
     // 센서가 없는 PC에서는 매번 PowerShell을 띄우지 않도록 실패를 더 오래 기억한다.
-    tempCache = { at: now, ttl: result === null ? 60000 : 3000, value: result };
+    tempCache = { at: now, ttl: result === null ? 12000 : 3000, value: result };
     return result;
   } catch {
-    tempCache = { at: now, ttl: 60000, value: null };
+    tempCache = { at: now, ttl: 12000, value: null };
     return null;
   }
 });
@@ -298,6 +324,9 @@ interface VolumeState {
 // 사이드카는 앱이 살아 있는 동안 함께 떠 있고, 기본 출력 장치 변경을 이벤트로 알린다.
 let audioBridge: AudioBridge | null = null;
 let audioDevice: AudioDevice | null = null;
+// Discord 음성 상태. 폴링 없이 이벤트로만 갱신된다.
+let discordBridge: DiscordBridge | null = null;
+let discordVoice: DiscordVoice | null = null;
 
 // 개발 중에는 저장소의 빌드 산출물, 패키지에서는 extraResources로 넣은 exe를 쓴다.
 function audioBridgePath(): string {
@@ -381,6 +410,91 @@ ipcMain.handle("notch:audio-device", async (): Promise<AudioDevice | null> => {
     if (state?.device) audioDevice = state.device;
   }
   return audioDevice;
+});
+
+// 복사한 텍스트 기록. 디스크에 쓰지 않고 실행 중인 동안만 메모리에 둔다.
+// 비밀번호 관리자 같은 앱이 넣은 값도 파일로 남지 않게 하려는 선택이다.
+interface ClipItem {
+  id: number;
+  text: string;
+  at: number;
+}
+
+const CLIP_LIMIT = 20;
+// 너무 긴 내용은 노치 목록에서 읽을 수 없고 payload만 커지므로 담지 않는다.
+const CLIP_MAX_CHARS = 20000;
+const CLIP_PREVIEW_CHARS = 160;
+
+let clipItems: ClipItem[] = [];
+let clipSeq = 0;
+// 마지막으로 확인한 클립보드 내용. 같은 내용을 다시 쌓지 않기 위해 둔다.
+let clipSeen = "";
+
+// 목록에는 한 줄 미리보기만 담아 IPC로 큰 문자열을 계속 보내지 않는다.
+function clipPreview(text: string): string {
+  return text.replace(/\s+/g, " ").trim().slice(0, CLIP_PREVIEW_CHARS);
+}
+
+function rememberClipboard(text: string): void {
+  if (!text || text === clipSeen) return;
+  clipSeen = text;
+  if (text.length > CLIP_MAX_CHARS) return;
+  clipItems = clipItems.filter((item) => item.text !== text);
+  clipItems.unshift({ id: ++clipSeq, text, at: Date.now() });
+  if (clipItems.length > CLIP_LIMIT) clipItems.length = CLIP_LIMIT;
+}
+
+let clipTimer: NodeJS.Timeout | null = null;
+
+// 클립보드에는 변경 이벤트가 없어 짧은 간격으로 읽어 비교한다.
+// 읽기는 Promise이므로 앞선 조회가 끝나기 전에는 다음 조회를 겹쳐 보내지 않는다.
+function startClipboardWatcher(): void {
+  if (clipTimer) return;
+  let busy = false;
+  const read = () => {
+    if (busy) return;
+    busy = true;
+    void clipboard
+      .readText()
+      .then(rememberClipboard)
+      // 읽지 못하면 다음 간격에 다시 시도한다.
+      .catch(() => undefined)
+      .finally(() => {
+        busy = false;
+      });
+  };
+  read();
+  clipTimer = setInterval(read, 600);
+}
+
+ipcMain.handle("notch:clip-list", () =>
+  clipItems.map((item) => ({ id: item.id, at: item.at, preview: clipPreview(item.text) })),
+);
+
+ipcMain.handle("notch:clip-copy", async (_event, id: unknown): Promise<boolean> => {
+  if (typeof id !== "number" || !Number.isFinite(id)) return false;
+  const item = clipItems.find((entry) => entry.id === id);
+  if (!item) return false;
+  try {
+    await clipboard.writeText(item.text);
+  } catch {
+    return false;
+  }
+  clipSeen = item.text;
+  // 방금 고른 항목을 맨 위(현재 클립보드)로 올린다.
+  clipItems = [item, ...clipItems.filter((entry) => entry.id !== item.id)];
+  return true;
+});
+
+ipcMain.handle("notch:clip-clear", async (): Promise<boolean> => {
+  clipItems = [];
+  // 지운 시점의 클립보드 내용이 다음 조회에서 다시 쌓이지 않게 기준을 옮긴다.
+  try {
+    clipSeen = await clipboard.readText();
+  } catch {
+    clipSeen = "";
+  }
+  return true;
 });
 
 interface MediaSessionRow {
@@ -880,6 +994,7 @@ function applySettings(): void {
 }
 
 ipcMain.handle("notch:settings", () => settings);
+ipcMain.handle("notch:voice-state", (): DiscordVoice | null => discordVoice);
 
 // JSON 파일은 임시 파일에 쓴 뒤 바꿔치기해, 쓰는 도중 앱이 꺼져도 반쯤 쓴 파일이 남지 않게 한다.
 function writeJsonFile(file: string, value: unknown, failure: string): void {
@@ -976,6 +1091,9 @@ function createWindow(): void {
     resizable: false,
     alwaysOnTop: true,
     skipTaskbar: true,
+    // 클릭해도 창이 활성화되지 않게 한다. 노치에서 클립보드 항목을 고른 뒤
+    // 사용자가 보던 앱이 그대로 앞에 있어야 바로 붙여넣을 수 있다.
+    focusable: false,
     hasShadow: false,
     icon: path.join(__dirname, "../assets/icon.png"),
     backgroundColor: "#00000000",
@@ -1033,6 +1151,14 @@ if (!app.requestSingleInstanceLock()) {
 
     // Windows에서 노치의 작업표시줄 앱 ID를 Notch로 고정한다.
     app.setAppUserModelId("com.notch.app");
+    startClipboardWatcher();
+    // Discord가 켜져 있을 때만 붙는다(로컬 IPC). 없으면 조용히 재시도만 한다.
+    discordBridge = createDiscordBridge(app.getPath("appData"));
+    discordBridge.onVoice((voice) => {
+      discordVoice = voice;
+      for (const win of BrowserWindow.getAllWindows()) win.webContents.send("notch:voice", voice);
+    });
+    discordBridge.start();
     createTray();
     createWindow();
     applySettings();
@@ -1047,6 +1173,10 @@ if (!app.requestSingleInstanceLock()) {
 
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
+  if (clipTimer) clearInterval(clipTimer);
+  clipTimer = null;
+  discordBridge?.dispose();
+  discordBridge = null;
   audioBridge?.dispose();
   audioBridge = null;
 });

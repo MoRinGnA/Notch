@@ -56,6 +56,19 @@ interface NotchAudioDeviceChange extends NotchAudioDevice {
   previous: string;
 }
 
+interface NotchClipItem {
+  id: number;
+  at: number;
+  preview: string;
+}
+
+interface NotchVoice {
+  inChannel: boolean;
+  muted: boolean;
+  deafened: boolean;
+  speaking: boolean;
+}
+
 interface NotchSettings {
   hoverOpen: boolean;
   toggleShortcut: string;
@@ -87,5 +100,10 @@ interface Window {
     getAudioDevice: () => Promise<NotchAudioDevice | null>;
     onAudioDevice: (callback: (device: NotchAudioDeviceChange) => void) => () => void;
     openSoundSettings: () => Promise<boolean>;
+    getClipboardItems: () => Promise<NotchClipItem[]>;
+    copyClipboardItem: (id: number) => Promise<boolean>;
+    clearClipboard: () => Promise<boolean>;
+    getVoiceState: () => Promise<NotchVoice | null>;
+    onVoice: (callback: (voice: NotchVoice) => void) => () => void;
   };
 }
