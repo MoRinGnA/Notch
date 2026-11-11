@@ -35,6 +35,22 @@ interface NotchVolume {
   muted: boolean;
 }
 
+interface NotchAudioApp {
+  pid: number;
+  name: string;
+  level: number;
+  muted: boolean;
+}
+
+interface NotchAudioDevice {
+  id: string;
+  name: string;
+}
+
+interface NotchAudioDeviceChange extends NotchAudioDevice {
+  previous: string;
+}
+
 interface NotchSettings {
   hoverOpen: boolean;
   toggleShortcut: string;
@@ -59,5 +75,11 @@ interface Window {
     getVolume: () => Promise<NotchVolume | null>;
     setVolume: (level: number) => Promise<boolean>;
     setMuted: (muted: boolean) => Promise<boolean>;
+    getAudioApps: () => Promise<NotchAudioApp[]>;
+    setAppVolume: (pid: number, level: number) => Promise<boolean>;
+    setAppMuted: (pid: number, muted: boolean) => Promise<boolean>;
+    getAudioDevice: () => Promise<NotchAudioDevice | null>;
+    onAudioDevice: (callback: (device: NotchAudioDeviceChange) => void) => () => void;
+    openSoundSettings: () => Promise<boolean>;
   };
 }

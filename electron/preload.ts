@@ -37,4 +37,16 @@ contextBridge.exposeInMainWorld("notchApi", {
   getVolume: () => ipcRenderer.invoke("notch:volume") as Promise<{ level: number; muted: boolean } | null>,
   setVolume: (level: number) => ipcRenderer.invoke("notch:volume-set", level) as Promise<boolean>,
   setMuted: (muted: boolean) => ipcRenderer.invoke("notch:volume-mute", muted) as Promise<boolean>,
+  getAudioApps: () =>
+    ipcRenderer.invoke("notch:audio-apps") as Promise<{ pid: number; name: string; level: number; muted: boolean }[]>,
+  setAppVolume: (pid: number, level: number) => ipcRenderer.invoke("notch:audio-app-set", pid, level) as Promise<boolean>,
+  setAppMuted: (pid: number, muted: boolean) => ipcRenderer.invoke("notch:audio-app-mute", pid, muted) as Promise<boolean>,
+  getAudioDevice: () => ipcRenderer.invoke("notch:audio-device") as Promise<{ id: string; name: string } | null>,
+  onAudioDevice: (callback: (device: { id: string; name: string; previous: string }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, device: { id: string; name: string; previous: string }) =>
+      callback(device);
+    ipcRenderer.on("notch:audio-device", listener);
+    return () => ipcRenderer.removeListener("notch:audio-device", listener);
+  },
+  openSoundSettings: () => ipcRenderer.invoke("notch:sound-settings") as Promise<boolean>,
 });

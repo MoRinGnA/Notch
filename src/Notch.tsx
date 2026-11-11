@@ -495,7 +495,7 @@ const VOLUME_POLL_MS = 300;
 const VOLUME_TICKS = Array.from({ length: 11 }, (_, index) => index * 10);
 
 // 시스템 마스터 볼륨. 부드러운 프로그래스 바 대신, 눈금 셀 사다리·커서·반전 플레이트로 값을 읽는 계기판.
-function VolumeDeck({ active }: { active: boolean }) {
+function VolumeDeck({ active, onOpenMixer }: { active: boolean; onOpenMixer?: () => void }) {
   const [volume, setVolume] = useState<NotchVolume | null>(null);
   const [dragging, setDragging] = useState(false);
   const [hover, setHover] = useState<number | null>(null);
@@ -731,6 +731,252 @@ function VolumeDeck({ active }: { active: boolean }) {
       >
         M
       </button>
+      {onOpenMixer && (
+        <button
+          type="button"
+          className="notch-vol-mix"
+          title="앱별 볼륨"
+          aria-label="앱별 볼륨"
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenMixer();
+          }}
+        >
+          MIX
+        </button>
+      )}
+    </div>
+  );
+}
+
+// 앱 하나의 음량 줄: 이름 · 1px 레일 · 판독값 · M 스위치. 끌거나 방향키로 조절한다.
+function AppRow({
+  app,
+  onLevel,
+  onMute,
+  onBusy,
+}: {
+  app: NotchAudioApp;
+  onLevel: (pid: number, level: number) => void;
+  onMute: (pid: number, muted: boolean) => void;
+  onBusy: (busy: boolean) => void;
+}) {
+  const trackRef = useRef<HTMLSpanElement>(null);
+  const draggingRef = useRef(false);
+  const level = Math.max(0, Math.min(100, app.level));
+  // 빠르게 연속으로 눌러도 한 번에 한 칸씩 오르도록 마지막 값을 따로 들고 있다.
+  const levelRef = useRef(level);
+  levelRef.current = level;
+  const step = (next: number) => {
+    const value = Math.max(0, Math.min(100, next));
+    levelRef.current = value;
+    onLevel(app.pid, value);
+  };
+
+  const levelAt = (clientX: number): number => {
+    const rect = trackRef.current?.getBoundingClientRect();
+    if (!rect) return level;
+    const ratio = (clientX - rect.left) / Math.max(1, rect.width);
+    return Math.round(Math.max(0, Math.min(1, ratio)) * 100);
+  };
+
+  const startDrag = (event: PointerEvent<HTMLSpanElement>) => {
+    event.stopPropagation();
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    draggingRef.current = true;
+    onBusy(true);
+    onLevel(app.pid, levelAt(event.clientX));
+  };
+
+  const moveDrag = (event: PointerEvent<HTMLSpanElement>) => {
+    if (!draggingRef.current) return;
+    event.stopPropagation();
+    onLevel(app.pid, levelAt(event.clientX));
+  };
+
+  const endDrag = (event: PointerEvent<HTMLSpanElement>) => {
+    if (!draggingRef.current) return;
+    draggingRef.current = false;
+    onBusy(false);
+    const track = event.currentTarget;
+    if (track.hasPointerCapture(event.pointerId)) track.releasePointerCapture(event.pointerId);
+  };
+
+  const handleKey = (event: KeyboardEvent<HTMLSpanElement>) => {
+    const delta = event.shiftKey ? 10 : 2;
+    const keys = ["ArrowRight", "ArrowUp", "ArrowLeft", "ArrowDown", "Home", "End", "m", "M"];
+    if (!keys.includes(event.key)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.key === "ArrowRight" || event.key === "ArrowUp") step(levelRef.current + delta);
+    else if (event.key === "ArrowLeft" || event.key === "ArrowDown") step(levelRef.current - delta);
+    else if (event.key === "Home") step(0);
+    else if (event.key === "End") step(100);
+    else onMute(app.pid, !app.muted);
+  };
+
+  return (
+    <div
+      className={`notch-mix-row${app.muted ? " is-muted" : ""}`}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <span className="notch-mix-name" title={app.name}>{app.name.toUpperCase()}</span>
+      <span
+        ref={trackRef}
+        className="notch-vol-track notch-mix-track"
+        role="slider"
+        tabIndex={0}
+        aria-label={`${app.name} 볼륨`}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={level}
+        aria-valuetext={app.muted ? "음소거됨" : `${level}%`}
+        onPointerDown={startDrag}
+        onPointerMove={moveDrag}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        onKeyDown={handleKey}
+      >
+        <span className="notch-vol-rail" aria-hidden="true" />
+        <span className="notch-vol-fill" aria-hidden="true" style={{ width: `${level}%` }} />
+        <span className="notch-vol-ticks" aria-hidden="true">
+          {VOLUME_TICKS.map((tick) => (
+            <span
+              key={tick}
+              className={`notch-vol-tick${tick % 50 === 0 ? " is-major" : ""}`}
+              style={{ left: `${tick}%` }}
+            />
+          ))}
+        </span>
+        <span className="notch-vol-cursor" aria-hidden="true" style={{ left: `${level}%` }} />
+      </span>
+      <span className={`notch-vol-value${app.muted ? " is-muted" : ""}`}>{String(level).padStart(3, "0")}</span>
+      <button
+        type="button"
+        className={`notch-vol-mute${app.muted ? " is-on" : ""}`}
+        aria-pressed={app.muted}
+        aria-label={app.muted ? `${app.name} 음소거 해제` : `${app.name} 음소거`}
+        title={app.muted ? "음소거 해제" : "음소거"}
+        onClick={(event) => {
+          event.stopPropagation();
+          onMute(app.pid, !app.muted);
+        }}
+      >
+        M
+      </button>
+    </div>
+  );
+}
+
+const MIX_POLL_MS = 800;
+
+// 앱별 볼륨 화면. 기본 출력 장치에서 실제로 소리를 내는 세션만 보여준다.
+function SoundMixer({ active, onClose }: { active: boolean; onClose: () => void }) {
+  const [apps, setApps] = useState<NotchAudioApp[]>([]);
+  const [device, setDevice] = useState("");
+  // 끌고 있는 동안 폴링 결과가 손가락 위치를 덮지 않게 한다.
+  const busyRef = useRef(false);
+  const requestRef = useRef(0);
+  // 앱마다 마지막 값만 묶어 보낸다(픽셀마다 IPC를 보내지 않게).
+  const queued = useRef(new Map<number, number>());
+  const queueTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!active) return;
+    const api = window.notchApi;
+    if (!api) return;
+    let cancelled = false;
+    const read = async () => {
+      const request = ++requestRef.current;
+      try {
+        const [list, output] = await Promise.all([api.getAudioApps(), api.getAudioDevice()]);
+        if (cancelled || request !== requestRef.current) return;
+        if (output?.name) setDevice(output.name);
+        if (!busyRef.current && queued.current.size === 0) setApps(list);
+      } catch {
+        // 잠깐 읽지 못하면 마지막 목록을 그대로 둔다.
+      }
+    };
+    void read();
+    const id = window.setInterval(read, MIX_POLL_MS);
+    return () => {
+      cancelled = true;
+      requestRef.current++;
+      window.clearInterval(id);
+    };
+  }, [active]);
+
+  useEffect(() => {
+    return () => {
+      if (queueTimer.current) window.clearTimeout(queueTimer.current);
+    };
+  }, []);
+
+  const setLevel = (pid: number, level: number) => {
+    setApps((previous) => previous.map((app) => (app.pid === pid ? { ...app, level, muted: false } : app)));
+    queued.current.set(pid, level);
+    if (queueTimer.current) return;
+    queueTimer.current = window.setTimeout(() => {
+      queueTimer.current = null;
+      const entries = [...queued.current.entries()];
+      queued.current.clear();
+      for (const [appPid, next] of entries) {
+        void window.notchApi?.setAppVolume(appPid, next).catch(() => undefined);
+      }
+    }, 70);
+  };
+
+  const setMute = (pid: number, muted: boolean) => {
+    setApps((previous) => previous.map((app) => (app.pid === pid ? { ...app, muted } : app)));
+    void window.notchApi?.setAppMuted(pid, muted).catch(() => undefined);
+  };
+
+  return (
+    <div className="notch-mix">
+      <span className="notch-mix-head">
+        <span className="notch-mix-title">SOUND</span>
+        <span className="notch-mix-device" title={device}>{device || "출력 장치"}</span>
+      </span>
+      <div className="notch-mix-list">
+        {apps.length === 0 ? (
+          <span className="notch-mix-empty">소리를 내는 앱이 없습니다.</span>
+        ) : (
+          apps.map((app) => (
+            <AppRow
+              key={app.pid}
+              app={app}
+              onLevel={setLevel}
+              onMute={setMute}
+              onBusy={(busy) => {
+                busyRef.current = busy;
+              }}
+            />
+          ))
+        )}
+      </div>
+      <span className="notch-mix-foot">
+        <button
+          type="button"
+          className="notch-btn"
+          onClick={(event) => {
+            event.stopPropagation();
+            onClose();
+          }}
+        >
+          BACK
+        </button>
+        <button
+          type="button"
+          className="notch-btn"
+          onClick={(event) => {
+            event.stopPropagation();
+            void window.notchApi?.openSoundSettings();
+          }}
+        >
+          SOUND SETTINGS
+        </button>
+      </span>
     </div>
   );
 }
@@ -1007,6 +1253,24 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
   const [temp, setTemp] = useState<number | null>(null);
   const [gpu, setGpu] = useState<number | null>(null);
   const [weather, setWeather] = useState<{ tempC: number; kind: string; city: string } | null>(null);
+  // 앱별 볼륨 화면. 펼친 패널 내용만 바꾸고, 접으면 닫힌다.
+  const [mixOpen, setMixOpen] = useState(false);
+  // 출력 장치가 바뀌면 잠깐 알린다(접힌 동안에는 OUT 배지로만).
+  const [deviceNote, setDeviceNote] = useState<NotchAudioDeviceChange | null>(null);
+
+  useEffect(() => {
+    if (!expanded) setMixOpen(false);
+  }, [expanded]);
+
+  useEffect(() => {
+    return window.notchApi?.onAudioDevice((change) => setDeviceNote(change));
+  }, []);
+
+  useEffect(() => {
+    if (!deviceNote) return;
+    const id = window.setTimeout(() => setDeviceNote(null), 9000);
+    return () => window.clearTimeout(id);
+  }, [deviceNote]);
 
   useEffect(() => {
     if (!expanded || hasMedia) return;
@@ -1082,7 +1346,15 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
         : lowBattery
           ? `LOW ${battery.percent}%`
           : "NOTCH-01";
-  const collapsedBadge = battery?.hasBattery ? (battery.charging ? "bolt" : lowBattery ? "LOW" : "") : "";
+  const collapsedBadge = battery?.hasBattery
+    ? battery.charging
+      ? "bolt"
+      : lowBattery
+        ? "LOW"
+        : ""
+    : deviceNote
+      ? "OUT"
+      : "";
   // 미디어 패널에서는 중복되는 NOTCH 문구를 숨기고 전원 상태만 표시한다.
   const footerText =
     expanded && view === "media" && !(battery?.hasBattery && (battery.charging || lowBattery))
@@ -1191,9 +1463,11 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
 
   // HUD는 미디어 가사 폭을 물려받지 않고 기본 폭으로 돌아온다.
   const notchWidth = expanded
-    ? view === "media" && hasSynced && widestLyric
-      ? expandedWidth ?? EXPANDED_WIDTH
-      : EXPANDED_WIDTH
+    ? mixOpen
+      ? EXPANDED_WIDTH
+      : view === "media" && hasSynced && widestLyric
+        ? expandedWidth ?? EXPANDED_WIDTH
+        : EXPANDED_WIDTH
     : collapsedWidth;
 
   const showArt = lyrics.state === "missing" || lyrics.state === "instrumental" || lyrics.state === "idle";
@@ -1211,7 +1485,7 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
       ref={notchRef}
       role="button"
       tabIndex={0}
-      className={`notch ${expanded ? "is-expanded" : "is-collapsed"}${view === "media" ? " has-media" : ""}${media.status === "Playing" ? " is-playing" : ""}${!expanded && collapsedBadge ? " has-status" : ""}`}
+      className={`notch ${expanded ? "is-expanded" : "is-collapsed"}${view === "media" ? " has-media" : ""}${mixOpen ? " has-mix" : ""}${media.status === "Playing" ? " is-playing" : ""}${!expanded && collapsedBadge ? " has-status" : ""}`}
       style={{
         ...(notchWidth ? { width: `${notchWidth}px` } : {}),
         "--media-accent": mediaAccent,
@@ -1270,7 +1544,24 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
       {/* 접힌 동안 패널 안의 버튼이 탭으로 잡히지 않게 inert를 준다. */}
       <div className="notch-panel" inert={!expanded}>
         <div className="notch-main">
-          {view === "hud" ? (
+          {deviceNote && (
+            <span className="notch-device-note" role="status" title={deviceNote.previous ? `이전: ${deviceNote.previous}` : undefined}>
+              <span className="notch-device-note-text">OUT · {deviceNote.name}</span>
+              <button
+                type="button"
+                className="notch-device-note-btn"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void window.notchApi?.openSoundSettings();
+                }}
+              >
+                SETTINGS
+              </button>
+            </span>
+          )}
+          {mixOpen ? (
+            <SoundMixer active={expanded} onClose={() => setMixOpen(false)} />
+          ) : view === "hud" ? (
           <div className="notch-hud">
             <span className="notch-hud-top">
               <span className="notch-hud-clock">
@@ -1293,7 +1584,7 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
                 <span className={`notch-hud-thermal${tempHot ? " is-hot" : ""}`}>{`TEMP ${hudTemp}°C`}</span>
                 {battery && !battery.hasBattery && <span>{`GPU ${hudGpu}%`}</span>}
               </span>
-              <VolumeDeck active={expanded} />
+              <VolumeDeck active={expanded} onOpenMixer={() => setMixOpen(true)} />
             </span>
           </div>
         ) : (
@@ -1380,7 +1671,7 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
               NEXT
             </button>
           </span>
-          <VolumeDeck active={expanded} />
+          <VolumeDeck active={expanded} onOpenMixer={() => setMixOpen(true)} />
         </div>
           </>
         )}

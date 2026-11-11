@@ -1011,6 +1011,167 @@ body,
   cursor: default;
 }
 
+/* 앱별 볼륨(MIX) 버튼: 음소거 스위치 옆에 붙는 작은 플레이트 */
+.notch-vol-mix {
+  flex: none;
+  height: 14px;
+  padding: 0 4px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.6);
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 8px;
+  line-height: 1;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.notch-vol-mix:hover {
+  border-color: #ffffff;
+  color: #ffffff;
+}
+
+/* 앱별 볼륨 화면: 마스터 계기판과 같은 1px 레일 규칙을 그대로 쓴다. */
+.notch-mix {
+  --vol-accent: var(--media-accent, var(--notch-accent));
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.notch-mix-head {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.notch-mix-title {
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.notch-mix-device {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.notch-mix-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.notch-mix-list::-webkit-scrollbar {
+  width: 0;
+}
+
+.notch-mix-row {
+  flex: none;
+  display: grid;
+  /* 앱 이름은 고정폭, 레일은 남는 폭을 채워 값과 스위치를 오른쪽에 맞춘다. */
+  grid-template-columns: minmax(0, 132px) minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 11px;
+}
+
+/* 음소거된 앱은 마스터 계기판과 같이 포인트 컬러를 뺀다. */
+.notch-mix-row.is-muted {
+  --vol-accent: rgba(255, 255, 255, 0.38);
+}
+
+.notch-mix-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.notch-mix-track {
+  width: 100%;
+}
+
+.notch-mix-empty {
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.notch-mix-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+/* 출력 장치가 바뀌었을 때 펼친 패널 위에 잠깐 남기는 한 줄 */
+.notch-device-note {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.notch-device-note-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.notch-device-note-btn {
+  flex: none;
+  padding: 1px 4px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.7);
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 8px;
+  line-height: 1;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+/* 호버는 색 대신 흑백 반전으로 강조한다 */
+.notch-device-note-btn:hover {
+  background: #ffffff;
+  border-color: #ffffff;
+  color: #000000;
+}
+
 
 
 /* 양 끝을 배경에 녹여 HUD 피드처럼 보이게 한다 */
@@ -1171,6 +1332,11 @@ body,
 
 /* 미디어 펼친 상태: 스캔라인은 가사 영역에만 있으므로 전체 전용 오버레이는 숨긴다 */
 .notch.has-media.is-expanded .notch-scan {
+  opacity: 0;
+}
+
+/* 앱별 볼륨 화면도 같은 이유로 전체 스캔라인을 두지 않는다. */
+.notch.has-mix.is-expanded .notch-scan {
   opacity: 0;
 }
 
