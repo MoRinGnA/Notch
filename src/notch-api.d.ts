@@ -105,5 +105,6 @@ interface Window {
     clearClipboard: () => Promise<boolean>;
     getVoiceState: () => Promise<NotchVoice | null>;
     onVoice: (callback: (voice: NotchVoice) => void) => () => void;
+    setVoice: (patch: { mute?: boolean; deaf?: boolean }) => Promise<boolean>;
   };
 }

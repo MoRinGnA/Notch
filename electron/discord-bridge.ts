@@ -44,9 +44,16 @@ interface DiscordConfig {
   refreshToken: string;
 }
 
+export interface DiscordVoicePatch {
+  mute?: boolean;
+  deaf?: boolean;
+}
+
 export interface DiscordBridge {
   start: () => void;
   onVoice: (callback: (voice: DiscordVoice) => void) => () => void;
+  // 디스코드 쪽 음소거를 바꾼다. 성공했을 때만 true.
+  setVoice: (patch: DiscordVoicePatch) => Promise<boolean>;
   dispose: () => void;
 }
 
@@ -111,7 +118,7 @@ export function createDiscordBridge(appData: string): DiscordBridge {
   let uid = "";
   let speakingTimer: NodeJS.Timeout | null = null;
   let state: DiscordVoice = { ...OFFLINE };
-  const pending = new Map<string, (data: unknown) => void>();
+  const pending = new Map<string, (data: unknown, failed: boolean) => void>();
   const listeners = new Set<(voice: DiscordVoice) => void>();
 
   const emit = (patch: Partial<DiscordVoice>) => {
@@ -128,23 +135,45 @@ export function createDiscordBridge(appData: string): DiscordBridge {
     for (const listener of listeners) listener(next);
   };
 
-  const call = (cmd: string, args: Record<string, unknown> = {}, evt?: string): Promise<unknown> => {
+  // ERROR 응답과 타임아웃을 구분해야 하는 쓰기 명령을 위해 실패 여부를 함께 돌려준다.
+  const send = (cmd: string, args: Record<string, unknown> = {}, evt?: string): Promise<{ data: unknown; failed: boolean }> => {
     const sock = socket;
-    if (!sock) return Promise.resolve(null);
+    if (!sock) return Promise.resolve({ data: null, failed: true });
     const nonce = randomUUID();
     return new Promise((resolve) => {
-      pending.set(nonce, resolve);
+      pending.set(nonce, (data, failed) => resolve({ data, failed }));
       try {
         sock.write(frame(OP_FRAME, { cmd, nonce, args, ...(evt ? { evt } : {}) }));
       } catch {
         pending.delete(nonce);
-        resolve(null);
+        resolve({ data: null, failed: true });
         return;
       }
       setTimeout(() => {
-        if (pending.delete(nonce)) resolve(null);
+        if (pending.delete(nonce)) resolve({ data: null, failed: true });
       }, REQUEST_TIMEOUT_MS);
     });
+  };
+
+  const call = async (cmd: string, args: Record<string, unknown> = {}, evt?: string): Promise<unknown> => {
+    const result = await send(cmd, args, evt);
+    return result.failed ? null : result.data;
+  };
+
+  // 클릭 한 번에 RPC 한 번. 폴링도, 추가 프로세스도 없이 같은 소켓을 그대로 쓴다.
+  const setVoice = async (patch: DiscordVoicePatch): Promise<boolean> => {
+    const result = await send("SET_VOICE_SETTINGS", { ...patch });
+    if (result.failed) {
+      // 왜 거절됐는지 한 줄만 남긴다(스코프 부족 등). 성공 경로는 조용히 둔다.
+      console.warn("discord: SET_VOICE_SETTINGS 실패", JSON.stringify(result.data));
+      return false;
+    }
+    // 확인 이벤트가 오기 전에 화면이 먼저 반응하도록 바로 반영한다.
+    emit({
+      ...(typeof patch.mute === "boolean" ? { muted: patch.mute } : {}),
+      ...(typeof patch.deaf === "boolean" ? { deafened: patch.deaf } : {}),
+    });
+    return true;
   };
 
   const applyVoiceSettings = (data: unknown) => {
@@ -215,8 +244,9 @@ export function createDiscordBridge(appData: string): DiscordBridge {
     if (message.nonce && pending.has(message.nonce)) {
       const resolve = pending.get(message.nonce);
       pending.delete(message.nonce);
-      // ERROR 응답은 상태를 바꾸지 않는다.
-      resolve?.(message.evt === "ERROR" ? null : message.data ?? null);
+      // ERROR 응답은 상태를 바꾸지 않고, 오류 본문은 호출한 쪽이 읽을 수 있게 남긴다.
+      const failed = message.evt === "ERROR";
+      resolve?.(message.data ?? null, failed);
       return;
     }
     if (message.evt === "READY") {
@@ -357,6 +387,7 @@ export function createDiscordBridge(appData: string): DiscordBridge {
         listeners.delete(callback);
       };
     },
+    setVoice,
     dispose() {
       disposed = true;
       if (timer) clearTimeout(timer);

@@ -996,6 +996,18 @@ function applySettings(): void {
 ipcMain.handle("notch:settings", () => settings);
 ipcMain.handle("notch:voice-state", (): DiscordVoice | null => discordVoice);
 
+// 노치의 마이크 아이콘에서 부르는 쓰기. 렌더러가 보낸 값은 boolean만 받는다.
+ipcMain.handle(
+  "notch:voice-set",
+  async (_event, patch: { mute?: unknown; deaf?: unknown } | null): Promise<boolean> => {
+    const next: { mute?: boolean; deaf?: boolean } = {};
+    if (typeof patch?.mute === "boolean") next.mute = patch.mute;
+    if (typeof patch?.deaf === "boolean") next.deaf = patch.deaf;
+    if (next.mute === undefined && next.deaf === undefined) return false;
+    return discordBridge ? discordBridge.setVoice(next) : false;
+  },
+);
+
 // JSON 파일은 임시 파일에 쓴 뒤 바꿔치기해, 쓰는 도중 앱이 꺼져도 반쯤 쓴 파일이 남지 않게 한다.
 function writeJsonFile(file: string, value: unknown, failure: string): void {
   try {

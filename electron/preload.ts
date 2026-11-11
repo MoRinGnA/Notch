@@ -57,6 +57,8 @@ contextBridge.exposeInMainWorld("notchApi", {
   getVoiceState: () => ipcRenderer.invoke("notch:voice-state") as Promise<{
     inChannel: boolean; muted: boolean; deafened: boolean; speaking: boolean;
   } | null>,
+  setVoice: (patch: { mute?: boolean; deaf?: boolean }) =>
+    ipcRenderer.invoke("notch:voice-set", patch) as Promise<boolean>,
   onVoice: (
     callback: (voice: { inChannel: boolean; muted: boolean; deafened: boolean; speaking: boolean }) => void,
   ) => {

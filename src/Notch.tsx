@@ -1089,27 +1089,55 @@ const CLIP_LIMIT_LABEL = "20";
 // 클립보드 기록 화면. 항목을 누르면 그 내용이 다시 클립보드로 들어간다.
 // 마이크 상태는 작은 채움 아이콘으로 보여준다. 아이콘 자체가 포인트 컬러라
 // 검정 본체 위에서도 밝고, 말하는 동안에만 오른쪽 음파가 점등된다.
-function MicStatus({ voice, inline = false }: { voice: NotchVoice; inline?: boolean }) {
-  const label = voice.muted ? "마이크 음소거" : voice.speaking ? "말하는 중" : "마이크 켜짐";
+// 클릭하면 마이크 음소거, 우클릭하면 헤드셋 음소거를 디스코드에 바로 건다.
+function MicStatus({
+  voice,
+  inline = false,
+  onToggle,
+}: {
+  voice: NotchVoice;
+  inline?: boolean;
+  onToggle: (patch: { mute?: boolean; deaf?: boolean }) => void;
+}) {
+  // 헤드셋을 끄면 디스코드가 입력도 함께 끄므로 둘을 같은 "꺼짐"으로 본다.
+  const off = voice.muted || voice.deafened;
+  const label = voice.deafened
+    ? "헤드셋 음소거"
+    : voice.muted
+      ? "마이크 음소거"
+      : voice.speaking
+        ? "말하는 중"
+        : "마이크 켜짐";
   return (
-    <span
-      className={`notch-mic${inline ? " is-inline" : ""}${voice.muted ? " is-muted" : ""}${voice.speaking && !voice.muted ? " is-speaking" : ""}`}
-      role="img"
-      aria-label={label}
-      title={label}
+    <button
+      type="button"
+      className={`notch-mic${inline ? " is-inline" : ""}${off ? " is-muted" : ""}${voice.speaking && !off ? " is-speaking" : ""}`}
+      aria-label={`${label} · 누르면 음소거 전환`}
+      title={`${label} · 클릭: 마이크 음소거, 우클릭: 헤드셋 음소거`}
+      onClick={(event) => {
+        event.stopPropagation();
+        // 헤드셋이 꺼져 있으면 먼저 그것부터 되살린다(디스코드가 입력도 함께 끄기 때문).
+        if (voice.deafened) onToggle({ deaf: false });
+        else onToggle({ mute: !voice.muted });
+      }}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onToggle({ deaf: !voice.deafened });
+      }}
     >
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <rect className="notch-mic-body" x="9" y="2.5" width="6" height="11" rx="3" />
         <path className="notch-mic-arc" d="M6 11a6 6 0 0 0 12 0M12 17v3.5M9 20.5h6" />
-        {voice.muted && <path className="notch-mic-slash" d="M3.5 3.5l17 17" />}
-        {voice.speaking && !voice.muted && (
+        {off && <path className="notch-mic-slash" d="M3.5 3.5l17 17" />}
+        {voice.speaking && !off && (
           <>
             <path className="notch-mic-wave is-near" d="M18.5 8.5a4.6 4.6 0 0 1 0 7" />
             <path className="notch-mic-wave is-far" d="M21.2 6a8.2 8.2 0 0 1 0 12" />
           </>
         )}
       </svg>
-    </span>
+    </button>
   );
 }
 
@@ -1533,6 +1561,11 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
     };
   }, []);
 
+  // 아이콘을 누르면 디스코드에 쓰기 명령을 한 번 보낸다(성공하면 이벤트로 상태가 돌아온다).
+  const toggleVoice = (patch: { mute?: boolean; deaf?: boolean }) => {
+    void window.notchApi?.setVoice(patch).catch(() => undefined);
+  };
+
   useEffect(() => {
     return window.notchApi?.onAudioDevice((change) => setDeviceNote(change));
   }, []);
@@ -1810,7 +1843,7 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
         </span>
       )}
       {footerText && <span className={`notch-title${lowBattery ? " is-low" : ""}`}>{footerText}</span>}
-      {showMic && voice && <MicStatus voice={voice} />}
+      {showMic && voice && <MicStatus voice={voice} onToggle={toggleVoice} />}
       {collapsedBadge === "bolt" ? (
         <span className="notch-bolt" aria-label="충전 중" />
       ) : collapsedBadge ? (
@@ -1872,7 +1905,7 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
                 >
                   CLIP
                 </button>
-                {voiceActive && voice && <MicStatus voice={voice} inline />}
+                {voiceActive && voice && <MicStatus voice={voice} inline onToggle={toggleVoice} />}
               </span>
               <VolumeDeck active={expanded} onOpenMixer={openMix} />
             </span>
@@ -1963,7 +1996,7 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
           >
             CLIP
           </button>
-          {voiceActive && voice && <MicStatus voice={voice} inline />}
+          {voiceActive && voice && <MicStatus voice={voice} inline onToggle={toggleVoice} />}
           </span>
           <span className="notch-controls-group">
             <button type="button" className="notch-btn" onClick={control("Previous")} disabled={playPending || !media.canPrev} aria-label="이전">

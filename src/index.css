@@ -427,7 +427,22 @@ body,
   transform: translateY(-50%);
   /* 아이콘 전체가 포인트 컬러를 따른다. */
   color: var(--notch-accent);
-  pointer-events: none;
+  /* 누를 수 있는 버튼이라 기본 모양을 지우고 클릭만 받는다. */
+  appearance: none;
+  margin: 0;
+  padding: 2px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  transition: opacity 0.14s ease;
+}
+
+.notch-mic:hover {
+  opacity: 0.75;
+}
+
+.notch-mic:focus-visible {
+  outline: none;
 }
 
 .notch-mic svg {
