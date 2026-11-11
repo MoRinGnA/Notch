@@ -1797,8 +1797,17 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
         ...(notchWidth ? { width: `${notchWidth}px` } : {}),
         "--media-accent": mediaAccent,
       } as CSSProperties}
-      onClick={onToggle}
-      onMouseEnter={onHoverStart}
+      onClick={(event) => {
+        // 마이크 아이콘의 클릭은 상위로 올리지 않는다(노치 고정/해제로 새면 안 됨).
+        if ((event.target as HTMLElement).closest?.(".notch-mic")) return;
+        onToggle();
+      }}
+      onMouseEnter={(event) => {
+        // 아이콘으로 곧장 들어온 경우에는 펼치지 않는다.
+        // 펼치면서 아이콘이 움직이면 게임 중에 헛클릭이 나기 때문.
+        if ((event.target as HTMLElement).closest?.(".notch-mic")) return;
+        onHoverStart?.();
+      }}
       onMouseLeave={onHoverEnd}
       onKeyDown={(e) => {
         if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {

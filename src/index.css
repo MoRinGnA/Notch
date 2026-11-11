@@ -437,6 +437,14 @@ body,
   transition: opacity 0.14s ease;
 }
 
+/* 글자는 그대로 두고 보이지 않는 사각 패딩만 넓혀, 게임 중에도 맞히기 쉽게 한다. */
+.notch-mic::before {
+  content: "";
+  position: absolute;
+  inset: -7px;
+  border-radius: 50%;
+}
+
 .notch-mic:hover {
   opacity: 0.75;
 }
