@@ -842,13 +842,18 @@ body,
   --vol-accent: rgba(255, 255, 255, 0.38);
 }
 
+/* 라벨은 표시용이자 앱별 볼륨으로 들어가는 버튼이다. */
 .notch-vol-label {
   flex: none;
+  padding: 0;
+  border: none;
+  background: transparent;
   font-family: "Consolas", "Courier New", monospace;
   font-size: 8px;
   line-height: 1;
   letter-spacing: 0.18em;
-  color: rgba(255, 255, 255, 0.42);
+  color: rgba(255, 255, 255, 0.55);
+  cursor: pointer;
   transition: color 0.12s ease;
 }
 
@@ -865,8 +870,8 @@ body,
 .notch-vol-track {
   position: relative;
   flex: none;
-  width: 88px;
-  height: 11px;
+  width: 96px;
+  height: 17px;
   /* 커서 모양은 바꾸지 않는다(끌 수 있다는 건 바늘이 알려 준다). */
   touch-action: none;
   outline: none;
@@ -884,7 +889,7 @@ body,
 
 .notch-vol-rail {
   right: 0;
-  background: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.24);
 }
 
 /* 보간 없이 즉시 튀어 오르게 둔다(기계식 계기판). */
@@ -903,7 +908,7 @@ body,
 .notch-vol-tick {
   position: absolute;
   top: 50%;
-  margin-top: 1px;
+  margin-top: 2px;
   width: 1px;
   height: 2px;
   margin-left: -0.5px;
@@ -915,33 +920,35 @@ body,
   background: rgba(255, 255, 255, 0.55);
 }
 
-/* 현재 값의 위치를 가리키는 바늘: 끝에 작은 머리를 붙인다 */
+/* 현재 값의 위치를 가리키는 바늘: 끝에 넓은 머리를 붙여 한눌에 보이게 한다 */
 .notch-vol-cursor {
   position: absolute;
   top: 0;
   width: 1px;
-  height: 11px;
+  height: 17px;
   margin-left: -0.5px;
   background: var(--vol-accent);
   pointer-events: none;
 }
 
+/* 머리는 레일 위에 얹힌 노브다. 바늘 중앙에 두어 선과 어긋나지 않게 한다. */
 .notch-vol-cursor::before {
   content: "";
   position: absolute;
-  top: 0;
-  left: -1px;
-  width: 3px;
-  height: 2px;
+  top: 50%;
+  margin-top: -2px;
+  left: -3px;
+  width: 7px;
+  height: 5px;
   background: var(--vol-accent);
 }
 
 /* 마우스로 훑는 동안 목표 지점을 얇은 바늘로만 미리 보여준다 */
 .notch-vol-ghost {
   position: absolute;
-  top: 1px;
+  top: 2px;
   width: 1px;
-  height: 9px;
+  height: 13px;
   margin-left: -0.5px;
   background: var(--vol-accent);
   opacity: 0.42;
@@ -958,10 +965,10 @@ body,
 
 .notch-vol-value {
   flex: none;
-  min-width: 21px;
+  min-width: 22px;
   text-align: right;
   font-family: "Consolas", "Courier New", monospace;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.08em;
@@ -1009,27 +1016,6 @@ body,
 .notch-vol-mute:disabled {
   opacity: 0.35;
   cursor: default;
-}
-
-/* 앱별 볼륨(MIX) 버튼: 음소거 스위치 옆에 붙는 작은 플레이트 */
-.notch-vol-mix {
-  flex: none;
-  height: 14px;
-  padding: 0 4px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: transparent;
-  color: rgba(255, 255, 255, 0.6);
-  font-family: "Consolas", "Courier New", monospace;
-  font-size: 8px;
-  line-height: 1;
-  letter-spacing: 0.1em;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
-}
-
-.notch-vol-mix:hover {
-  border-color: #ffffff;
-  color: #ffffff;
 }
 
 /* 앱별 볼륨 화면: 마스터 계기판과 같은 1px 레일 규칙을 그대로 쓴다. */
@@ -1092,9 +1078,26 @@ body,
   gap: 11px;
 }
 
-/* 음소거된 앱은 마스터 계기판과 같이 포인트 컬러를 뺀다. */
+/* 음소거된 줄은 마스터 계기판과 같이 포인트 컬러를 뺀다. */
 .notch-mix-row.is-muted {
   --vol-accent: rgba(255, 255, 255, 0.38);
+}
+
+/* 마스터는 구분선 위의 상위 줄이라 이름을 밝게 두고 자간을 넓힌다. */
+.notch-mix-row.is-master .notch-mix-name {
+  color: #ffffff;
+  letter-spacing: 0.2em;
+}
+
+.notch-mix-row.is-off {
+  opacity: 0.55;
+}
+
+.notch-mix-divider {
+  flex: none;
+  height: 1px;
+  margin: 1px 0;
+  background: rgba(255, 255, 255, 0.14);
 }
 
 .notch-mix-name {
@@ -1254,12 +1257,8 @@ body,
   gap: 6px;
 }
 
-.notch-controls .notch-vol-label {
-  display: none;
-}
-
 .notch-controls .notch-vol-track {
-  width: 80px;
+  width: 88px;
 }
 
 

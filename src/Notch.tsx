@@ -677,7 +677,23 @@ function VolumeDeck({ active, onOpenMixer }: { active: boolean; onOpenMixer?: ()
       className={`notch-vol${muted ? " is-muted" : ""}${dragging ? " is-live" : ""}${volume === null ? " is-off" : ""}`}
       onClick={(event) => event.stopPropagation()}
     >
-      <span className="notch-vol-label">VOL</span>
+      {/* 라벨이 곧 앱별 볼륨으로 들어가는 문이다(눌러서 열고, 끄는 건 레일에서). */}
+      {onOpenMixer ? (
+        <button
+          type="button"
+          className="notch-vol-label"
+          title="앱별 볼륨 열기"
+          aria-label="앱별 볼륨 열기"
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenMixer();
+          }}
+        >
+          VOL
+        </button>
+      ) : (
+        <span className="notch-vol-label">VOL</span>
+      )}
       <span
         ref={trackRef}
         className="notch-vol-track"
@@ -731,46 +747,40 @@ function VolumeDeck({ active, onOpenMixer }: { active: boolean; onOpenMixer?: ()
       >
         M
       </button>
-      {onOpenMixer && (
-        <button
-          type="button"
-          className="notch-vol-mix"
-          title="앱별 볼륨"
-          aria-label="앱별 볼륨"
-          onClick={(event) => {
-            event.stopPropagation();
-            onOpenMixer();
-          }}
-        >
-          MIX
-        </button>
-      )}
     </div>
   );
 }
 
-// 앱 하나의 음량 줄: 이름 · 1px 레일 · 판독값 · M 스위치. 끌거나 방향키로 조절한다.
-function AppRow({
-  app,
+// 한 줄짜리 음량 계기판. MASTER와 앱이 같은 모양을 쓰고, 구분선 위/아래 위치로 위계를 보여 준다.
+function MixRow({
+  label,
+  level: rawLevel,
+  muted,
+  master = false,
+  unavailable = false,
   onLevel,
   onMute,
   onBusy,
 }: {
-  app: NotchAudioApp;
-  onLevel: (pid: number, level: number) => void;
-  onMute: (pid: number, muted: boolean) => void;
+  label: string;
+  level: number;
+  muted: boolean;
+  master?: boolean;
+  unavailable?: boolean;
+  onLevel: (level: number) => void;
+  onMute: (muted: boolean) => void;
   onBusy: (busy: boolean) => void;
 }) {
   const trackRef = useRef<HTMLSpanElement>(null);
   const draggingRef = useRef(false);
-  const level = Math.max(0, Math.min(100, app.level));
+  const level = Math.max(0, Math.min(100, rawLevel));
   // 빠르게 연속으로 눌러도 한 번에 한 칸씩 오르도록 마지막 값을 따로 들고 있다.
   const levelRef = useRef(level);
   levelRef.current = level;
   const step = (next: number) => {
     const value = Math.max(0, Math.min(100, next));
     levelRef.current = value;
-    onLevel(app.pid, value);
+    onLevel(value);
   };
 
   const levelAt = (clientX: number): number => {
@@ -786,13 +796,13 @@ function AppRow({
     event.currentTarget.setPointerCapture(event.pointerId);
     draggingRef.current = true;
     onBusy(true);
-    onLevel(app.pid, levelAt(event.clientX));
+    onLevel(levelAt(event.clientX));
   };
 
   const moveDrag = (event: PointerEvent<HTMLSpanElement>) => {
     if (!draggingRef.current) return;
     event.stopPropagation();
-    onLevel(app.pid, levelAt(event.clientX));
+    onLevel(levelAt(event.clientX));
   };
 
   const endDrag = (event: PointerEvent<HTMLSpanElement>) => {
@@ -813,25 +823,26 @@ function AppRow({
     else if (event.key === "ArrowLeft" || event.key === "ArrowDown") step(levelRef.current - delta);
     else if (event.key === "Home") step(0);
     else if (event.key === "End") step(100);
-    else onMute(app.pid, !app.muted);
+    else onMute(!muted);
   };
 
   return (
     <div
-      className={`notch-mix-row${app.muted ? " is-muted" : ""}`}
+      className={`notch-mix-row${master ? " is-master" : ""}${muted ? " is-muted" : ""}${unavailable ? " is-off" : ""}`}
       onClick={(event) => event.stopPropagation()}
     >
-      <span className="notch-mix-name" title={app.name}>{app.name.toUpperCase()}</span>
+      <span className="notch-mix-name" title={label}>{label}</span>
       <span
         ref={trackRef}
         className="notch-vol-track notch-mix-track"
         role="slider"
-        tabIndex={0}
-        aria-label={`${app.name} 볼륨`}
+        tabIndex={unavailable ? -1 : 0}
+        aria-label={`${label} 볼륨`}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={level}
-        aria-valuetext={app.muted ? "음소거됨" : `${level}%`}
+        aria-valuetext={unavailable ? "사용할 수 없음" : muted ? "음소거됨" : `${level}%`}
+        aria-disabled={unavailable}
         onPointerDown={startDrag}
         onPointerMove={moveDrag}
         onPointerUp={endDrag}
@@ -851,16 +862,19 @@ function AppRow({
         </span>
         <span className="notch-vol-cursor" aria-hidden="true" style={{ left: `${level}%` }} />
       </span>
-      <span className={`notch-vol-value${app.muted ? " is-muted" : ""}`}>{String(level).padStart(3, "0")}</span>
+      <span className={`notch-vol-value${muted ? " is-muted" : ""}`}>
+        {unavailable ? "---" : String(level).padStart(3, "0")}
+      </span>
       <button
         type="button"
-        className={`notch-vol-mute${app.muted ? " is-on" : ""}`}
-        aria-pressed={app.muted}
-        aria-label={app.muted ? `${app.name} 음소거 해제` : `${app.name} 음소거`}
-        title={app.muted ? "음소거 해제" : "음소거"}
+        className={`notch-vol-mute${muted ? " is-on" : ""}`}
+        aria-pressed={muted}
+        aria-label={muted ? `${label} 음소거 해제` : `${label} 음소거`}
+        title={muted ? "음소거 해제" : "음소거"}
+        disabled={unavailable}
         onClick={(event) => {
           event.stopPropagation();
-          onMute(app.pid, !app.muted);
+          onMute(!muted);
         }}
       >
         M
@@ -874,6 +888,7 @@ const MIX_POLL_MS = 800;
 // 앱별 볼륨 화면. 기본 출력 장치에서 실제로 소리를 내는 세션만 보여준다.
 function SoundMixer({ active, onClose }: { active: boolean; onClose: () => void }) {
   const [apps, setApps] = useState<NotchAudioApp[]>([]);
+  const [master, setMaster] = useState<NotchVolume | null>(null);
   const [device, setDevice] = useState("");
   // 끌고 있는 동안 폴링 결과가 손가락 위치를 덮지 않게 한다.
   const busyRef = useRef(false);
@@ -881,6 +896,8 @@ function SoundMixer({ active, onClose }: { active: boolean; onClose: () => void 
   // 앱마다 마지막 값만 묶어 보낸다(픽셀마다 IPC를 보내지 않게).
   const queued = useRef(new Map<number, number>());
   const queueTimer = useRef<number | null>(null);
+  const queuedMaster = useRef<number | null>(null);
+  const masterTimer = useRef<number | null>(null);
 
   useEffect(() => {
     if (!active) return;
@@ -890,10 +907,15 @@ function SoundMixer({ active, onClose }: { active: boolean; onClose: () => void 
     const read = async () => {
       const request = ++requestRef.current;
       try {
-        const [list, output] = await Promise.all([api.getAudioApps(), api.getAudioDevice()]);
+        const [list, output, volume] = await Promise.all([
+          api.getAudioApps(),
+          api.getAudioDevice(),
+          api.getVolume(),
+        ]);
         if (cancelled || request !== requestRef.current) return;
         if (output?.name) setDevice(output.name);
         if (!busyRef.current && queued.current.size === 0) setApps(list);
+        if (volume && !busyRef.current && queuedMaster.current === null) setMaster(volume);
       } catch {
         // 잠깐 읽지 못하면 마지막 목록을 그대로 둔다.
       }
@@ -910,6 +932,7 @@ function SoundMixer({ active, onClose }: { active: boolean; onClose: () => void 
   useEffect(() => {
     return () => {
       if (queueTimer.current) window.clearTimeout(queueTimer.current);
+      if (masterTimer.current) window.clearTimeout(masterTimer.current);
     };
   }, []);
 
@@ -932,6 +955,24 @@ function SoundMixer({ active, onClose }: { active: boolean; onClose: () => void 
     void window.notchApi?.setAppMuted(pid, muted).catch(() => undefined);
   };
 
+  const setMasterLevel = (level: number) => {
+    setMaster((previous) => (previous ? { ...previous, level, muted: false } : previous));
+    queuedMaster.current = level;
+    if (masterTimer.current) return;
+    masterTimer.current = window.setTimeout(() => {
+      masterTimer.current = null;
+      const value = queuedMaster.current;
+      queuedMaster.current = null;
+      if (value === null) return;
+      void window.notchApi?.setVolume(value).catch(() => undefined);
+    }, 70);
+  };
+
+  const setMasterMute = (muted: boolean) => {
+    setMaster((previous) => (previous ? { ...previous, muted } : previous));
+    void window.notchApi?.setMuted(muted).catch(() => undefined);
+  };
+
   return (
     <div className="notch-mix">
       <span className="notch-mix-head">
@@ -939,15 +980,30 @@ function SoundMixer({ active, onClose }: { active: boolean; onClose: () => void 
         <span className="notch-mix-device" title={device}>{device || "출력 장치"}</span>
       </span>
       <div className="notch-mix-list">
+        <MixRow
+          label="MASTER"
+          master
+          level={master?.level ?? 0}
+          muted={master?.muted ?? false}
+          unavailable={!master}
+          onLevel={setMasterLevel}
+          onMute={setMasterMute}
+          onBusy={(busy) => {
+            busyRef.current = busy;
+          }}
+        />
+        <span className="notch-mix-divider" aria-hidden="true" />
         {apps.length === 0 ? (
           <span className="notch-mix-empty">소리를 내는 앱이 없습니다.</span>
         ) : (
           apps.map((app) => (
-            <AppRow
+            <MixRow
               key={app.pid}
-              app={app}
-              onLevel={setLevel}
-              onMute={setMute}
+              label={app.name.toUpperCase()}
+              level={app.level}
+              muted={app.muted}
+              onLevel={(level) => setLevel(app.pid, level)}
+              onMute={(muted) => setMute(app.pid, muted)}
               onBusy={(busy) => {
                 busyRef.current = busy;
               }}
