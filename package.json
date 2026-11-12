@@ -9,6 +9,7 @@
     "audio:build": "node scripts/build-audio.mjs",
     "build": "npm run audio:build && tsc --noEmit -p tsconfig.json && vite build && tsc -p electron/tsconfig.json && node -e \"require('fs').copyFileSync('electron/package.json','dist-electron/package.json')\"",
     "dist:win": "npm run build && electron-builder --win portable --x64 --publish never",
+    "pack": "npm run build && electron-builder --win dir --x64 --publish never",
     "start": "electron .",
     "icon": "node scripts/make-icon.mjs"
   },

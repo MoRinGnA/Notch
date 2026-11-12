@@ -94,3 +94,4 @@ Windows 상단 상태 아일랜드입니다. 접힘과 펼침 두 상태가 있�
 - 한 번에 한 묶음만 구현합니다.
 - 기능마다 빌드(`npm run build`)를 통과시킨 뒤 다음으로 넘어갑니다.
 - 커밋은 사용자 확인 후 진행합니다.
+- exe는 두 가지로 만듭니다. 작업 중 확인은 `npm run pack`(`release\win-unpacked\Notch.exe`, 약 15초)으로 하고, 파일 하나로 옮길 때만 `npm run dist:win`(portable `release\Notch.exe`, 약 4분)을 씁니다. 둘의 차이는 마지막 7z 압축 단계 하나뿐이고, 압축을 건너뛴 쪽이 실행도 더 빠릅니다.
