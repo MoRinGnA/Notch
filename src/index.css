@@ -416,6 +416,24 @@ body,
   padding-right: 52px;
 }
 
+/* 노트북에서 충전 배지와 마이크가 겹치지 않게, 배지는 마이크 왼쪽 자리로 물린다. */
+.notch.is-collapsed.has-voice .notch-bolt,
+.notch.is-collapsed.has-voice .notch-status {
+  right: 45px;
+}
+
+/* 배지가 들어갈 자리만큼 오른쪽 여백을 늘려 글자가 배지 아래로 들어가지 않게 한다. */
+.notch.is-collapsed.has-voice.has-status {
+  padding-right: 72px;
+}
+
+/* 다른 사람이 말하는 동안은 그 자리에 이니셜이 뜨므로 배지를 잠깐 감춘다(폭은 그대로). */
+.notch.is-collapsed:has(.notch-voice-now) .notch-bolt,
+.notch.is-collapsed:has(.notch-voice-now) .notch-status {
+  opacity: 0;
+  transition-delay: 0s;
+}
+
 .notch-mic {
   position: absolute;
   right: 15px;
@@ -1479,7 +1497,7 @@ body,
 /* 접힌 노치: 다른 사람이 말할 때만 마이크 아이콘 왼쪽 빈자리에 이니셜이 뜬다. */
 .notch-voice-now {
   position: absolute;
-  right: 39px;
+  right: 43px;
   top: 50%;
   z-index: 4;
   display: flex;
