@@ -1275,6 +1275,105 @@ body,
 }
 
 /* 클립보드 기록: 앱별 볼륨과 같은 머리·목록·발 구조를 그대로 쓴다. */
+/* 디스코드 연결 화면(트레이에서 열 때만). */
+.notch-link {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.notch-link-head {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.notch-link-title {
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.notch-link-state {
+  flex: none;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.notch-link-note {
+  flex: none;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 10px;
+  line-height: 1.55;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.notch-link-form {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 비밀값 입력칸은 화면의 다른 버튼과 같은 결을 유지한다. */
+.notch-link-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.04);
+  color: #ffffff;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  outline: none;
+}
+
+.notch-link-input::placeholder {
+  color: rgba(255, 255, 255, 0.3);
+}
+
+.notch-link-input:focus {
+  border-color: var(--notch-accent);
+}
+
+.notch-link-status {
+  flex: 1;
+  min-height: 0;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 10px;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.notch-link-status.is-ok {
+  color: var(--notch-accent);
+}
+
+.notch-link-status.is-error {
+  color: #ff9a8a;
+}
+
+.notch-link-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+}
+
 /* 디스코드 전용 화면(펼쳤을 때만). */
 .notch-voice {
   flex: 1;

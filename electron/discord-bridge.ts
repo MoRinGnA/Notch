@@ -1,8 +1,7 @@
 import dns from "node:dns";
-import fs from "node:fs";
 import net from "node:net";
-import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { readDiscordConfig, writeDiscordConfig } from "./discord-config";
 
 // Discord API가 IPv6로 먼저 붙었다가 멈추는 환경이 있어 IPv4를 먼저 쓴다.
 dns.setDefaultResultOrder("ipv4first");
@@ -68,12 +67,6 @@ interface RpcMessage {
   data?: unknown;
 }
 
-interface DiscordConfig {
-  clientId: string;
-  clientSecret: string;
-  refreshToken: string;
-}
-
 export interface DiscordVoicePatch {
   mute?: boolean;
   deaf?: boolean;
@@ -84,33 +77,13 @@ export interface DiscordBridge {
   onVoice: (callback: (voice: DiscordVoice) => void) => () => void;
   // 디스코드 쪽 음소거를 바꾼다. 성공했을 때만 true.
   setVoice: (patch: DiscordVoicePatch) => Promise<boolean>;
+  // 인증 정보를 새로 받은 뒤 기존 소켓 대신 새로 붙는다(연결 절차 직후).
+  restart: () => void;
   dispose: () => void;
 }
 
-const configPath = (appData: string): string => path.join(appData, "Notch", "discord.json");
-
-function readConfig(appData: string): DiscordConfig | null {
-  try {
-    const raw = JSON.parse(fs.readFileSync(configPath(appData), "utf8")) as Partial<DiscordConfig>;
-    if (!raw.clientId || !raw.clientSecret || !raw.refreshToken) return null;
-    return { clientId: raw.clientId, clientSecret: raw.clientSecret, refreshToken: raw.refreshToken };
-  } catch {
-    return null;
-  }
-}
-
-function saveRefreshToken(appData: string, config: DiscordConfig, refreshToken: string): void {
-  try {
-    const next = { ...config, refreshToken };
-    fs.mkdirSync(path.dirname(configPath(appData)), { recursive: true });
-    fs.writeFileSync(configPath(appData), JSON.stringify(next, null, 2) + "\n", "utf8");
-  } catch {
-    // 저장에 실패해도 이번 실행은 계속한다.
-  }
-}
-
 // refresh_token으로 access_token을 새로 받는다. 만료가 7일이라 실행 중에는 거의 쓰이지 않는다.
-async function refreshAccessToken(config: DiscordConfig): Promise<{ token: string; refreshToken: string } | null> {
+async function refreshAccessToken(config: { clientId: string; clientSecret: string; refreshToken: string }): Promise<{ token: string; refreshToken: string } | null> {
   try {
     const res = await fetch("https://discord.com/api/v10/oauth2/token", {
       method: "POST",
@@ -471,7 +444,7 @@ export function createDiscordBridge(appData: string): DiscordBridge {
 
   const connect = async () => {
     if (disposed || socket) return;
-    const config = readConfig(appData);
+    const config = readDiscordConfig(appData);
     // 설정이 없으면 Discord를 쓰지 않는 것으로 보고 조용히 쉰다.
     if (!config) {
       scheduleReconnect();
@@ -520,7 +493,10 @@ export function createDiscordBridge(appData: string): DiscordBridge {
       scheduleReconnect();
       return;
     }
-    if (token.refreshToken !== config.refreshToken) saveRefreshToken(appData, config, token.refreshToken);
+    // 디스코드는 refresh할 때마다 토큰을 새로 발급하므로 즉시 저장한다.
+    if (token.refreshToken !== config.refreshToken) {
+      writeDiscordConfig(appData, { ...config, refreshToken: token.refreshToken });
+    }
     await call("AUTHENTICATE", { access_token: token.token });
     await call("GET_VOICE_SETTINGS").then(applyVoiceSettings);
     // 음성 이벤트 구독. 실패해도 mute 표시는 계속 동작한다.
@@ -543,6 +519,13 @@ export function createDiscordBridge(appData: string): DiscordBridge {
       };
     },
     setVoice,
+    restart() {
+      if (disposed) return;
+      if (timer) clearTimeout(timer);
+      timer = null;
+      teardown();
+      void connect();
+    },
     dispose() {
       disposed = true;
       if (timer) clearTimeout(timer);

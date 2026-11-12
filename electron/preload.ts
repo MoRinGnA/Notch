@@ -64,6 +64,14 @@ contextBridge.exposeInMainWorld("notchApi", {
   } | null>,
   setVoice: (patch: { mute?: boolean; deaf?: boolean }) =>
     ipcRenderer.invoke("notch:voice-set", patch) as Promise<boolean>,
+  isDiscordLinked: () => ipcRenderer.invoke("notch:discord-linked") as Promise<boolean>,
+  linkDiscord: (secret: string) =>
+    ipcRenderer.invoke("notch:discord-link", secret) as Promise<{ ok: boolean; error?: string }>,
+  onDiscordLink: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on("notch:discord-link", listener);
+    return () => ipcRenderer.removeListener("notch:discord-link", listener);
+  },
   onVoice: (
     callback: (voice: {
       inChannel: boolean;

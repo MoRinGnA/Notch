@@ -117,5 +117,8 @@ interface Window {
     getVoiceState: () => Promise<NotchVoice | null>;
     onVoice: (callback: (voice: NotchVoice) => void) => () => void;
     setVoice: (patch: { mute?: boolean; deaf?: boolean }) => Promise<boolean>;
+    isDiscordLinked: () => Promise<boolean>;
+    linkDiscord: (secret: string) => Promise<{ ok: boolean; error?: string }>;
+    onDiscordLink: (callback: () => void) => () => void;
   };
 }

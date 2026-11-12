@@ -4,6 +4,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { createAudioBridge, type AudioBridge, type AudioDevice } from "./audio-bridge";
 import { createDiscordBridge, type DiscordBridge, type DiscordVoice } from "./discord-bridge";
+import { linkDiscord } from "./discord-auth";
+import { readDiscordConfig } from "./discord-config";
 
 // 가사 길이에 따라 노치가 넓어질 수 있도록 창을 넉넉히 둔다.
 const WINDOW_WIDTH = 900;
@@ -327,6 +329,18 @@ let audioDevice: AudioDevice | null = null;
 // Discord 음성 상태. 폴링 없이 이벤트로만 갱신된다.
 let discordBridge: DiscordBridge | null = null;
 let discordVoice: DiscordVoice | null = null;
+
+// 인증 정보가 없는 PC에서도 연결 절차를 마친 직후 바로 쓸 수 있게 재시작한다.
+function startDiscordBridge(): void {
+  discordBridge?.dispose();
+  const bridge = createDiscordBridge(app.getPath("appData"));
+  bridge.onVoice((voice) => {
+    discordVoice = voice;
+    for (const win of BrowserWindow.getAllWindows()) win.webContents.send("notch:voice", voice);
+  });
+  bridge.start();
+  discordBridge = bridge;
+}
 
 // 개발 중에는 저장소의 빌드 산출물, 패키지에서는 extraResources로 넣은 exe를 쓴다.
 function audioBridgePath(): string {
@@ -881,6 +895,16 @@ function buildTrayMenu(): Menu {
       ],
     },
     { type: "separator" },
+    {
+      label: "Discord 연결…",
+      click: () => {
+        const win = notchWindow;
+        if (!win || win.isDestroyed()) return;
+        // 연결 화면을 띄우려면 노치가 펼쳐진 상태여야 한다.
+        if (!win.isVisible()) win.showInactive();
+        win.webContents.send("notch:discord-link");
+      },
+    },
     { label: "Notch 종료", click: () => app.quit() },
   ]);
 }
@@ -995,6 +1019,15 @@ function applySettings(): void {
 
 ipcMain.handle("notch:settings", () => settings);
 ipcMain.handle("notch:voice-state", (): DiscordVoice | null => discordVoice);
+// 이 PC에 디스코드 인증 정보가 있는지. 연결 화면의 안내 문구를 고르는 데 쓴다.
+ipcMain.handle("notch:discord-linked", (): boolean => !!readDiscordConfig(app.getPath("appData")));
+
+// 연결 절차. 디스코드 창에 승인 창을 띄우고, 받은 토큰을 이 PC에만 저장한다.
+ipcMain.handle("notch:discord-link", async (_event, secret: unknown) => {
+  const result = await linkDiscord(app.getPath("appData"), secret);
+  if (result.ok) startDiscordBridge();
+  return result;
+});
 
 // 노치의 마이크 아이콘에서 부르는 쓰기. 렌더러가 보낸 값은 boolean만 받는다.
 ipcMain.handle(
@@ -1165,12 +1198,7 @@ if (!app.requestSingleInstanceLock()) {
     app.setAppUserModelId("com.notch.app");
     startClipboardWatcher();
     // Discord가 켜져 있을 때만 붙는다(로컬 IPC). 없으면 조용히 재시도만 한다.
-    discordBridge = createDiscordBridge(app.getPath("appData"));
-    discordBridge.onVoice((voice) => {
-      discordVoice = voice;
-      for (const win of BrowserWindow.getAllWindows()) win.webContents.send("notch:voice", voice);
-    });
-    discordBridge.start();
+    startDiscordBridge();
     createTray();
     createWindow();
     applySettings();

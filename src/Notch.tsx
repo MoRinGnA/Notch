@@ -11,6 +11,8 @@ import {
 interface NotchProps {
   expanded: boolean;
   onToggle: () => void;
+  // 트레이에서 화면을 열 때처럼, 접혀 있으면 펼치기만 한다.
+  onExpand: () => void;
   onHoverStart?: () => void;
   onHoverEnd?: () => void;
 }
@@ -1142,6 +1144,107 @@ function MicStatus({
 }
 
 // 접힌 노치에서는 다른 사람이 말할 때만 이니셜을 잠깐 띄운다(폭이나 가사 위치를 건드리지 않음).
+// 이 PC에 디스코드 인증 정보가 없을 때 쓰는 연결 화면. 트레이 메뉴에서 연다.
+function DiscordLink({ onClose }: { onClose: () => void }) {
+  const [secret, setSecret] = useState("");
+  const [state, setState] = useState<"idle" | "busy" | "ok" | "error">("idle");
+  const [note, setNote] = useState("");
+  const [linked, setLinked] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    void window.notchApi
+      ?.isDiscordLinked()
+      .then(setLinked)
+      .catch(() => undefined);
+  }, []);
+
+  const submit = () => {
+    if (state === "busy") return;
+    const api = window.notchApi;
+    if (!api) return;
+    setState("busy");
+    // 디스코드 창 안에 승인 창이 뜨므로 그쪽을 보라고 안내한다.
+    setNote("디스코드 창에 뜬 승인 창에서 허용을 눌러 주세요.");
+    void api
+      .linkDiscord(secret)
+      .then((result) => {
+        if (result.ok) {
+          setState("ok");
+          setLinked(true);
+          setSecret("");
+          setNote("연결되었습니다. 음성 채널에 들어가면 표시됩니다.");
+          return;
+        }
+        setState("error");
+        setNote(result.error ?? "연결하지 못했습니다.");
+      })
+      .catch(() => {
+        setState("error");
+        setNote("연결하지 못했습니다.");
+      });
+  };
+
+  return (
+    <div
+      className="notch-link"
+      onClick={(event) => event.stopPropagation()}
+      onContextMenu={(event) => event.stopPropagation()}
+    >
+      <span className="notch-link-head">
+        <span className="notch-link-title">DISCORD</span>
+        <span className="notch-link-state">
+          {linked === null ? "" : linked ? "LINKED" : "NOT LINKED"}
+        </span>
+      </span>
+      <span className="notch-link-note">
+        {linked
+          ? "이미 연결되어 있습니다. 다시 연결하면 이 PC의 토큰이 새로 발급됩니다."
+          : "이 PC에는 인증 정보가 없습니다. 디스코드 개발자 포털의 OAuth2 클라이언트 시크릿을 한 번 넣으면 이 PC에만 저장됩니다."}
+      </span>
+      <form
+        className="notch-link-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          submit();
+        }}
+      >
+        <input
+          className="notch-link-input"
+          type="password"
+          value={secret}
+          autoFocus
+          spellCheck={false}
+          autoComplete="off"
+          placeholder="CLIENT SECRET"
+          aria-label="디스코드 클라이언트 시크릿"
+          onChange={(event) => setSecret(event.target.value)}
+        />
+        <button type="submit" className="notch-btn" disabled={state === "busy" || secret.trim().length === 0}>
+          {state === "busy" ? "WAIT" : "CONNECT"}
+        </button>
+      </form>
+      <span
+        className={`notch-link-status${state === "error" ? " is-error" : state === "ok" ? " is-ok" : ""}`}
+        role="status"
+      >
+        {note}
+      </span>
+      <span className="notch-link-foot">
+        <button
+          type="button"
+          className="notch-btn"
+          onClick={(event) => {
+            event.stopPropagation();
+            onClose();
+          }}
+        >
+          CLOSE
+        </button>
+      </span>
+    </div>
+  );
+}
+
 function VoiceNow({ voice }: { voice: NotchVoice }) {
   const others = voice.members.filter((member) => !member.self && member.speaking).slice(0, 2);
   if (others.length === 0) return null;
@@ -1350,7 +1453,7 @@ function ClipShelf({ active, onClose }: { active: boolean; onClose: () => void }
   );
 }
 
-export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchProps) {
+export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, onHoverEnd }: NotchProps) {
   const notchRef = useRef<HTMLDivElement>(null);
   // 접힌 미디어 행: 곡 정보(왼쪽)와 현재 가사(오른쪽)
   const trackRef = useRef<HTMLSpanElement>(null);
@@ -1628,6 +1731,8 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
   const [clipOpen, setClipOpen] = useState(false);
   // 디스코드 전용 화면.
   const [voiceOpen, setVoiceOpen] = useState(false);
+  // 트레이에서 연 연결 화면.
+  const [linkOpen, setLinkOpen] = useState(false);
   // 세 화면은 같은 자리를 쓰므로 하나를 열면 나머지는 닫는다.
   const openClip = () => {
     setMixOpen(false);
@@ -1642,6 +1747,7 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
   const openVoice = () => {
     setClipOpen(false);
     setMixOpen(false);
+    setLinkOpen(false);
     setVoiceOpen(true);
   };
   // 출력 장치가 바뀌면 잠깐 알린다(접힌 동안에는 OUT 배지로만).
@@ -1651,8 +1757,17 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
       setMixOpen(false);
       setClipOpen(false);
       setVoiceOpen(false);
+      setLinkOpen(false);
     }
   }, [expanded]);
+
+  // 트레이의 "Discord 연결…"을 누르면 노치를 펼치고 연결 화면을 보여 준다.
+  useEffect(() => {
+    return window.notchApi?.onDiscordLink(() => {
+      openExpand();
+      setLinkOpen(true);
+    });
+  }, [openExpand]);
 
   // Discord 음성 상태. 음성 채널에 들어가 있을 때만 접힌 노치 오른쪽에 표시한다.
   const [voice, setVoice] = useState<NotchVoice | null>(null);
@@ -1992,7 +2107,9 @@ export function Notch({ expanded, onToggle, onHoverStart, onHoverEnd }: NotchPro
               </button>
             </span>
           )}
-          {voiceOpen && voiceActive && voice ? (
+          {linkOpen ? (
+            <DiscordLink onClose={() => setLinkOpen(false)} />
+          ) : voiceOpen && voiceActive && voice ? (
             <VoicePanel voice={voice} onClose={() => setVoiceOpen(false)} onToggle={toggleVoice} />
           ) : clipOpen ? (
             <ClipShelf active={expanded} onClose={() => setClipOpen(false)} />

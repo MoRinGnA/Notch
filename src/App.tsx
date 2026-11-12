@@ -75,6 +75,11 @@ export function App() {
     });
   }, []);
 
+  // 트레이에서 특정 화면을 열 때는 펼치기만 하고 접지는 않는다.
+  const handleExpand = () => {
+    setPinned(true);
+  };
+
   const handleToggle = () => {
     if (pinnedRef.current) {
       setPinned(false);
@@ -120,6 +125,7 @@ export function App() {
       <Notch
         expanded={expanded}
         onToggle={handleToggle}
+        onExpand={handleExpand}
         onHoverStart={handleHoverStart}
         onHoverEnd={handleHoverEnd}
       />
