@@ -14,7 +14,8 @@ const WINDOW_HEIGHT = 340;
 
 // CPU 온도는 LibreHardwareMonitor/OpenHardwareMonitor의 CPU 센서를 먼저 쓴다.
 // 없으면 성능 카운터의 정밀 온도(0.1K), 일반 온도(K), 마지막으로 ACPI WMI(0.1K)를 시도한다.
-// Windows 열 구역은 CPU 다이 온도가 아닐 수 있으므로 말이 되는 범위의 가장 높은 값만 쓴다.
+// Windows 열 구역은 CPU 다이 온도가 아닐 수 있으므로 말이 되는 범위의 가장 높은 값만 쓰고,
+// 마지막 ACPI 폴백은 어디서 읽었는지 함께 돌려줘 화면에서 CPU로 표기하지 않게 한다.
 const TEMP_SCRIPT = `
 $ErrorActionPreference = 'SilentlyContinue'
 function Read-Sensor($ns) {
@@ -26,8 +27,11 @@ function Read-Sensor($ns) {
     return [double](($sensors | Measure-Object -Property Value -Maximum).Maximum)
   } catch { return $null }
 }
+$source = $null
 $value = Read-Sensor 'root/LibreHardwareMonitor'
+if ($null -ne $value) { $source = 'cpu' }
 if ($null -eq $value) { $value = Read-Sensor 'root/OpenHardwareMonitor' }
+if ($null -ne $value) { $source = 'cpu' }
 if ($null -eq $value) {
   try {
     $zones = @(Get-CimInstance -ClassName Win32_PerfFormattedData_Counters_ThermalZoneInformation -ErrorAction Stop)
@@ -47,29 +51,51 @@ if ($null -eq $value) {
     # CPU 명시 존이 있으면 우선하고, 이름을 알 수 없으면 보고된 열 구역 중 가장 높은 값.
     $cpuTemps = @($temps | Where-Object { $_.Name -match 'CPUZ|TSZ0|TZ00|TZ01|THRM' })
     if ($cpuTemps.Count -gt 0) { $temps = $cpuTemps }
-    if ($temps.Count -gt 0) { $value = ($temps | Measure-Object -Property Celsius -Maximum).Maximum }
+    if ($temps.Count -gt 0) {
+      $value = ($temps | Measure-Object -Property Celsius -Maximum).Maximum
+      $source = 'cpu'
+    }
   } catch { }
 }
 if ($null -eq $value) {
   try {
     $zones = @(Get-CimInstance -Namespace 'root/wmi' -ClassName MSAcpi_ThermalZoneTemperature -ErrorAction Stop)
     $temps = @($zones | Where-Object { $_.Active -ne $false -and [double]$_.CurrentTemperature -gt 0 } | ForEach-Object { ([double]$_.CurrentTemperature / 10.0) - 273.15 } | Where-Object { $_ -ge 15 -and $_ -le 115 })
-    if ($temps.Count -gt 0) { $value = ($temps | Measure-Object -Maximum).Maximum }
+    if ($temps.Count -gt 0) {
+      $value = ($temps | Measure-Object -Maximum).Maximum
+      $source = 'acpi'
+    }
   } catch { }
 }
-if ($null -eq $value) { 'null' } else { [Math]::Round([double]$value, 1).ToString([System.Globalization.CultureInfo]::InvariantCulture) }
+if ($null -eq $value) {
+  'null'
+} else {
+  $source + ':' + [Math]::Round([double]$value, 1).ToString([System.Globalization.CultureInfo]::InvariantCulture)
+}
 `;
 
-// HUD가 5초 간격으로 물어보므로 짧게 캐시해 PowerShell을 덜 띄운다.
-let tempCache: { at: number; ttl: number; value: number | null } | null = null;
+// 어디서 읽었는지까지 화면에 전달한다. acpi는 CPU 다이 온도가 아닌 열 구역 값이다.
+type TempSource = "cpu" | "acpi";
 
-ipcMain.handle("notch:temp", async (): Promise<number | null> => {
+interface NotchTemperature {
+  value: number;
+  source: TempSource;
+}
+
+// HUD가 5초 간격으로 물어보므로 짧게 캐시해 PowerShell을 덜 띄운다.
+let tempCache: { at: number; ttl: number; value: NotchTemperature | null } | null = null;
+
+ipcMain.handle("notch:temp", async (): Promise<NotchTemperature | null> => {
   if (process.platform !== "win32") return null;
   const now = Date.now();
   if (tempCache && now - tempCache.at < tempCache.ttl) return tempCache.value;
   try {
-    const value = Number.parseFloat((await runPowerShell(TEMP_SCRIPT)).trim());
-    const result = Number.isFinite(value) && value > 0 && value < 150 ? value : null;
+    const [tag, digits] = (await runPowerShell(TEMP_SCRIPT)).trim().split(":");
+    const value = Number.parseFloat(digits ?? "");
+    const result =
+      Number.isFinite(value) && value > 0 && value < 150
+        ? { value, source: (tag === "acpi" ? "acpi" : "cpu") as TempSource }
+        : null;
     // 센서가 없는 PC에서는 매번 PowerShell을 띄우지 않도록 실패를 더 오래 기억한다.
     tempCache = { at: now, ttl: result === null ? 12000 : 3000, value: result };
     return result;
@@ -896,14 +922,25 @@ function buildTrayMenu(): Menu {
     },
     { type: "separator" },
     {
+      label: "테마",
+      submenu: [
+        {
+          label: "다크",
+          type: "radio" as const,
+          checked: settings.theme !== "light",
+          click: () => saveSettings({ theme: "dark" }),
+        },
+        {
+          label: "라이트",
+          type: "radio" as const,
+          checked: settings.theme === "light",
+          click: () => saveSettings({ theme: "light" }),
+        },
+      ],
+    },
+    {
       label: "Discord 연결…",
-      click: () => {
-        const win = notchWindow;
-        if (!win || win.isDestroyed()) return;
-        // 연결 화면을 띄우려면 노치가 펼쳐진 상태여야 한다.
-        if (!win.isVisible()) win.showInactive();
-        win.webContents.send("notch:discord-link");
-      },
+      click: () => openDiscordLink(),
     },
     { label: "Notch 종료", click: () => app.quit() },
   ]);
@@ -911,6 +948,25 @@ function buildTrayMenu(): Menu {
 
 function updateTrayMenu(): void {
   tray?.setContextMenu(buildTrayMenu());
+}
+
+// 노치 창은 클릭해도 앞 창이 가려지지 않도록 포커스를 받지 않게 만들어져 있다.
+// 그런데 연결 화면은 시크릿을 키보드로 입력해야 하므로, 그 화면이 떠 있는 동안만 포커스를 허용한다.
+function openDiscordLink(): void {
+  const win = notchWindow;
+  if (!win || win.isDestroyed()) return;
+  if (!win.isVisible()) win.showInactive();
+  win.setFocusable(true);
+  win.focus();
+  win.webContents.send("notch:discord-link");
+}
+
+function closeDiscordLink(): void {
+  const win = notchWindow;
+  if (!win || win.isDestroyed() || !win.isFocusable()) return;
+  // 포커스를 놓은 뒤에 되돌려야 게임 등 앞 창이 그대로 키보드를 이어받는다.
+  win.blur();
+  win.setFocusable(false);
 }
 
 // 투명한 창 바깥 부분은 클릭을 뒤쪽 창으로 통과시킨다.
@@ -943,16 +999,21 @@ ipcMain.on("notch:bounds", (event, bounds: { x: number; y: number; width: number
 // 펼침/접힘 전역 단축키 (Ctrl+Alt+N).
 const TOGGLE_ACCELERATOR = "CommandOrControl+Alt+N";
 
+// 노치 색. 기본은 지금까지 쓰던 검정이다.
+type NotchTheme = "dark" | "light";
+
 interface NotchSettings {
   hoverOpen: boolean;
   toggleShortcut: string;
   hideOnFullscreen: boolean;
+  theme: NotchTheme;
 }
 
 const DEFAULT_SETTINGS: NotchSettings = {
   hoverOpen: true,
   toggleShortcut: TOGGLE_ACCELERATOR,
   hideOnFullscreen: false,
+  theme: "dark",
 };
 
 // 전체화면 숨김은 기본값에서 opt-in으로 바뀌었다. 구버전 설정 파일은
@@ -990,6 +1051,7 @@ function readSettings(): NotchSettings {
       hideOnFullscreen: isLegacy
         ? DEFAULT_SETTINGS.hideOnFullscreen
         : typeof raw.hideOnFullscreen === "boolean" ? raw.hideOnFullscreen : DEFAULT_SETTINGS.hideOnFullscreen,
+      theme: raw.theme === "light" ? "light" : "dark",
     };
     // 옮긴 값을 한 번은 파일에 남겨, 다음 실행부터는 사용자가 고른 값과 화면 동작이 어긋나지 않게 한다.
     if (isLegacy) writeJsonFile(settingsFile(), { ...migrated, settingsVersion: SETTINGS_VERSION }, "설정을 옮기지 못했습니다:");
@@ -1021,6 +1083,9 @@ ipcMain.handle("notch:settings", () => settings);
 ipcMain.handle("notch:voice-state", (): DiscordVoice | null => discordVoice);
 // 이 PC에 디스코드 인증 정보가 있는지. 연결 화면의 안내 문구를 고르는 데 쓴다.
 ipcMain.handle("notch:discord-linked", (): boolean => !!readDiscordConfig(app.getPath("appData")));
+
+// 연결 화면이 닫히면 창을 다시 비활성 상태로 되돌린다.
+ipcMain.on("notch:discord-link-close", () => closeDiscordLink());
 
 // 연결 절차. 디스코드 창에 승인 창을 띄우고, 받은 토큰을 이 PC에만 저장한다.
 ipcMain.handle("notch:discord-link", async (_event, secret: unknown) => {
@@ -1150,6 +1215,8 @@ function createWindow(): void {
   });
 
   win.setAlwaysOnTop(true, "screen-saver");
+  // 연결 화면을 닫지 않고 다른 창을 눌렀을 때도 원래의 비활성 창으로 돌아간다.
+  win.on("blur", () => closeDiscordLink());
   notchWindow = win;
   win.on("closed", () => {
     if (fullscreenTimer) clearInterval(fullscreenTimer);

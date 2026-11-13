@@ -84,6 +84,7 @@ interface NotchSettings {
   hoverOpen: boolean;
   toggleShortcut: string;
   hideOnFullscreen: boolean;
+  theme: "dark" | "light";
 }
 
 interface Window {
@@ -91,7 +92,7 @@ interface Window {
     setNotchBounds: (bounds: { x: number; y: number; width: number; height: number }) => void;
     getSettings: () => Promise<NotchSettings>;
     onSettings: (callback: (settings: NotchSettings) => void) => () => void;
-    getTemp: () => Promise<number | null>;
+    getTemp: () => Promise<{ value: number; source: "cpu" | "acpi" } | null>;
     getGpu: () => Promise<number | null>;
     getBattery: () => Promise<NotchBattery>;
     onPowerChange: (callback: (onBattery: boolean) => void) => () => void;
@@ -120,5 +121,6 @@ interface Window {
     isDiscordLinked: () => Promise<boolean>;
     linkDiscord: (secret: string) => Promise<{ ok: boolean; error?: string }>;
     onDiscordLink: (callback: () => void) => () => void;
+    closeDiscordLink: () => void;
   };
 }

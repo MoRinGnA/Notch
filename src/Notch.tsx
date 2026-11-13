@@ -415,15 +415,47 @@ function ScrollingTitle({ text, className }: { text: string; className: string }
   );
 }
 
-function extractMediaAccent(image: HTMLImageElement): string {
+// 표지 대표색은 바탕에 따라 두 벌로 만든다.
+// 어두운 바탕에서는 밝게 띄워야 하고, 종이색 바탕에서는 반대로 가라앉혀야 읽힌다.
+interface MediaAccent {
+  dark: string;
+  light: string;
+}
+
+const FALLBACK_ACCENT: MediaAccent = { dark: "#e8833a", light: "#c2611f" };
+
+// 같은 색상·채도를 유지한 채 밝기만 바꿔 헥스로 만든다.
+function hslHex(hue: number, saturation: number, lightness: number): string {
+  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
+  const huePart = chroma * (1 - Math.abs(((hue / 60) % 2) - 1));
+  const offset = lightness - chroma / 2;
+  const channels =
+    hue < 60
+      ? [chroma, huePart, 0]
+      : hue < 120
+        ? [huePart, chroma, 0]
+        : hue < 180
+          ? [0, chroma, huePart]
+          : hue < 240
+            ? [0, huePart, chroma]
+            : hue < 300
+              ? [huePart, 0, chroma]
+              : [chroma, 0, huePart];
+  return `#${channels
+    .map((channel) => Math.round((channel + offset) * 255))
+    .map((channel) => channel.toString(16).padStart(2, "0"))
+    .join("")}`;
+}
+
+function extractMediaAccent(image: HTMLImageElement): MediaAccent {
   try {
-    if (!image.complete || !image.naturalWidth || !image.naturalHeight) return "#e8833a";
+    if (!image.complete || !image.naturalWidth || !image.naturalHeight) return FALLBACK_ACCENT;
     const canvas = document.createElement("canvas");
     const side = 24;
     canvas.width = side;
     canvas.height = side;
     const context = canvas.getContext("2d", { willReadFrequently: true });
-    if (!context) return "#e8833a";
+    if (!context) return FALLBACK_ACCENT;
     context.drawImage(image, 0, 0, side, side);
     const { data } = context.getImageData(0, 0, side, side);
     const bins = new Map<number, { score: number; red: number; green: number; blue: number; weight: number }>();
@@ -448,14 +480,14 @@ function extractMediaAccent(image: HTMLImageElement): string {
       bins.set(key, bin);
     }
     const dominant = [...bins.values()].sort((a, b) => b.score - a.score)[0];
-    if (!dominant?.weight) return "#e8833a";
+    if (!dominant?.weight) return FALLBACK_ACCENT;
     // Use the most common saturated color bucket rather than the cover's potentially muddy average.
     const channels = [dominant.red, dominant.green, dominant.blue].map((sum) => Math.round(sum / dominant.weight));
     const [red, green, blue] = channels.map((channel) => channel / 255);
     const high = Math.max(red, green, blue);
     const low = Math.min(red, green, blue);
     const delta = high - low;
-    if (high * 255 < 34 || delta * 255 < 18) return "#e8833a";
+    if (high * 255 < 34 || delta * 255 < 18) return FALLBACK_ACCENT;
 
     // Lift dark cover colors in HSL so their hue survives but the accent stays legible on black.
     const lightness = (high + low) / 2;
@@ -468,26 +500,15 @@ function extractMediaAccent(image: HTMLImageElement): string {
           ? 60 * ((blue - red) / delta + 2)
           : 60 * ((red - green) / delta + 4);
     const hue = ((rawHue % 360) + 360) % 360;
-    const liftedLightness = Math.max(lightness, 0.82);
-    const chroma = (1 - Math.abs(2 * liftedLightness - 1)) * saturation;
-    const huePart = chroma * (1 - Math.abs(((hue / 60) % 2) - 1));
-    const offset = liftedLightness - chroma / 2;
-    const lifted = hue < 60
-      ? [chroma, huePart, 0]
-      : hue < 120
-        ? [huePart, chroma, 0]
-        : hue < 180
-          ? [0, chroma, huePart]
-          : hue < 240
-            ? [0, huePart, chroma]
-            : hue < 300
-              ? [huePart, 0, chroma]
-              : [chroma, 0, huePart];
-    const brightChannels = lifted.map((channel) => Math.round((channel + offset) * 255));
-    return `#${brightChannels.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+    return {
+      // 검은 바탕에서는 밝게 띄워야 색이 살아난다.
+      dark: hslHex(hue, saturation, Math.max(lightness, 0.82)),
+      // 종이색 바탕에서는 같은 색을 34~50% 밝기로 가라앉혀 대비를 만든다.
+      light: hslHex(hue, saturation, Math.min(0.5, Math.max(0.34, lightness))),
+    };
   } catch {
     // Tainted or unsupported image sources fall back to the existing accent.
-    return "#e8833a";
+    return FALLBACK_ACCENT;
   }
 }
 
@@ -1158,6 +1179,11 @@ function DiscordLink({ onClose }: { onClose: () => void }) {
       .catch(() => undefined);
   }, []);
 
+  // 화면이 사라지면 창을 다시 포커스 없는 상태로 돌려놓는다(앞 창이 키보드를 이어받게).
+  useEffect(() => {
+    return () => window.notchApi?.closeDiscordLink();
+  }, []);
+
   const submit = () => {
     if (state === "busy") return;
     const api = window.notchApi;
@@ -1477,7 +1503,7 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
   }, []);
 
   const [media, setMedia] = useState<NotchMedia>(EMPTY_MEDIA);
-  const [mediaAccent, setMediaAccent] = useState("#e8833a");
+  const [mediaAccent, setMediaAccent] = useState<MediaAccent>(FALLBACK_ACCENT);
   const [lyrics, setLyrics] = useState<Lyrics>({ state: "idle", text: "", synced: [] });
   const [now, setNow] = useState(() => Date.now());
   const [battery, setBattery] = useState<NotchBattery | null>(null);
@@ -1702,7 +1728,7 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
   useEffect(() => {
     let cancelled = false;
     if (!mediaAccentSource) {
-      setMediaAccent("#e8833a");
+      setMediaAccent(FALLBACK_ACCENT);
       return;
     }
     const image = new Image();
@@ -1710,7 +1736,7 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
       if (!cancelled) setMediaAccent(extractMediaAccent(image));
     };
     image.onerror = () => {
-      if (!cancelled) setMediaAccent("#e8833a");
+      if (!cancelled) setMediaAccent(FALLBACK_ACCENT);
     };
     image.src = mediaAccentSource;
     if (image.complete && image.naturalWidth > 0) setMediaAccent(extractMediaAccent(image));
@@ -1722,7 +1748,7 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
 
   // 미디어가 없을 때 펼친 화면은 HUD만 보여준다. 시계와 온도는 그때만 돈다.
   const [hudNow, setHudNow] = useState(() => Date.now());
-  const [temp, setTemp] = useState<number | null>(null);
+  const [temp, setTemp] = useState<{ value: number; source: "cpu" | "acpi" } | null>(null);
   const [gpu, setGpu] = useState<number | null>(null);
   const [weather, setWeather] = useState<{ tempC: number; kind: string; city: string } | null>(null);
   // 앱별 볼륨 화면. 펼친 패널 내용만 바꾸고, 접으면 닫힌다.
@@ -1900,9 +1926,11 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
   const hudHm = `${pad2(hudDate.getHours())}:${pad2(hudDate.getMinutes())}`;
   const hudSec = pad2(hudDate.getSeconds());
   const hudDay = `${hudDate.getFullYear()}.${pad2(hudDate.getMonth() + 1)}.${pad2(hudDate.getDate())} ${hudDate.toLocaleDateString("en-US", { weekday: "short" }).toUpperCase()}`;
-  const hudTemp = (temp === null ? "--" : String(Math.round(temp))).padStart(3, " ");
+  const hudTemp = (temp === null ? "--" : String(Math.round(temp.value))).padStart(3, " ");
+  // ACPI 열 구역까지 내려간 값은 CPU 다이 온도가 아니므로 라벨을 바꾼다. 앞자리를 4칸으로 맞춰 숫자 열은 그대로.
+  const hudTempLabel = (temp?.source === "acpi" ? "ACPI" : "CPU").padEnd(4, " ");
   const hudGpu = (gpu === null ? "--" : String(Math.round(gpu))).padStart(3, " ");
-  const tempHot = temp !== null && temp >= 85;
+  const tempHot = temp !== null && temp.value >= 85;
   // 제목과 같은 앨범은 중복이라 메타 줄에서 뺀다.
   const metaAlbum =
     media.album && media.album !== media.title && media.album !== shownTitle ? media.album : "";
@@ -2021,7 +2049,8 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
       className={`notch ${expanded ? "is-expanded" : "is-collapsed"}${view === "media" ? " has-media" : ""}${mixOpen ? " has-mix" : ""}${media.status === "Playing" ? " is-playing" : ""}${!expanded && collapsedBadge ? " has-status" : ""}${showMic ? " has-voice" : ""}`}
       style={{
         ...(notchWidth ? { width: `${notchWidth}px` } : {}),
-        "--media-accent": mediaAccent,
+        "--media-accent-dark": mediaAccent.dark,
+        "--media-accent-light": mediaAccent.light,
       } as CSSProperties}
       onClick={(event) => {
         // 마이크 아이콘의 클릭은 상위로 올리지 않는다(노치 고정/해제로 새면 안 됨).
@@ -2135,7 +2164,7 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
             <span className="notch-hud-date">{hudDay}</span>
             <span className="notch-hud-strip">
               <span className="notch-hud-readings">
-                <span className={`notch-hud-thermal${tempHot ? " is-hot" : ""}`}>{`TEMP ${hudTemp}°C`}</span>
+                <span className={`notch-hud-thermal${tempHot ? " is-hot" : ""}`}>{`${hudTempLabel}${hudTemp}°C`}</span>
                 {battery && !battery.hasBattery && <span>{`GPU ${hudGpu}%`}</span>}
                 <button
                   type="button"

@@ -3,7 +3,8 @@ import { contextBridge, ipcRenderer } from "electron";
 contextBridge.exposeInMainWorld("notchApi", {
   setNotchBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
     ipcRenderer.send("notch:bounds", bounds),
-  getTemp: () => ipcRenderer.invoke("notch:temp") as Promise<number | null>,
+  getTemp: () =>
+    ipcRenderer.invoke("notch:temp") as Promise<{ value: number; source: "cpu" | "acpi" } | null>,
   getGpu: () => ipcRenderer.invoke("notch:gpu") as Promise<number | null>,
   getMedia: () => ipcRenderer.invoke("notch:media"),
   getBattery: () => ipcRenderer.invoke("notch:battery") as Promise<{ hasBattery: boolean; percent: number; charging: boolean }>,
@@ -11,10 +12,20 @@ contextBridge.exposeInMainWorld("notchApi", {
     hoverOpen: boolean;
     toggleShortcut: string;
     hideOnFullscreen: boolean;
+    theme: "dark" | "light";
   }>,
-  onSettings: (callback: (settings: { hoverOpen: boolean; toggleShortcut: string; hideOnFullscreen: boolean }) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, settings: { hoverOpen: boolean; toggleShortcut: string; hideOnFullscreen: boolean }) =>
-      callback(settings);
+  onSettings: (
+    callback: (settings: {
+      hoverOpen: boolean;
+      toggleShortcut: string;
+      hideOnFullscreen: boolean;
+      theme: "dark" | "light";
+    }) => void,
+  ) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      settings: { hoverOpen: boolean; toggleShortcut: string; hideOnFullscreen: boolean; theme: "dark" | "light" },
+    ) => callback(settings);
     ipcRenderer.on("notch:settings", listener);
     return () => ipcRenderer.removeListener("notch:settings", listener);
   },
@@ -72,6 +83,8 @@ contextBridge.exposeInMainWorld("notchApi", {
     ipcRenderer.on("notch:discord-link", listener);
     return () => ipcRenderer.removeListener("notch:discord-link", listener);
   },
+  // 연결 화면을 닫았으니 노치 창을 다시 비활성 상태로 되돌리라고 알린다.
+  closeDiscordLink: () => ipcRenderer.send("notch:discord-link-close"),
   onVoice: (
     callback: (voice: {
       inChannel: boolean;
