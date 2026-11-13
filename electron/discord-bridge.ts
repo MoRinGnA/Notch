@@ -444,6 +444,8 @@ export function createDiscordBridge(appData: string): DiscordBridge {
 
   const connect = async () => {
     if (disposed || socket) return;
+    // 연결 도중 restart/teardown이 일어나면 이 실행은 버린다(소켓 두 개가 겹치지 않게).
+    const stale = (sock: net.Socket) => disposed || socket !== sock;
     const config = readDiscordConfig(appData);
     // 설정이 없으면 Discord를 쓰지 않는 것으로 보고 조용히 쉰다.
     if (!config) {
@@ -486,7 +488,9 @@ export function createDiscordBridge(appData: string): DiscordBridge {
     }
     // READY를 기다린 뒤 토큰을 갱신해 인증한다.
     await new Promise((r) => setTimeout(r, 700));
+    if (stale(sock)) return;
     const token = await refreshAccessToken(config);
+    if (stale(sock)) return;
     if (!token) {
       // 갱신 실패(비밀번호 변경·승인 취소 등)면 표시하지 않는다.
       teardown();
@@ -497,13 +501,21 @@ export function createDiscordBridge(appData: string): DiscordBridge {
     if (token.refreshToken !== config.refreshToken) {
       writeDiscordConfig(appData, { ...config, refreshToken: token.refreshToken });
     }
-    await call("AUTHENTICATE", { access_token: token.token });
+    const auth = await send("AUTHENTICATE", { access_token: token.token });
+    if (stale(sock)) return;
+    if (auth.failed) {
+      // 토큰이 거부되면 이 소켓은 아무 일도 하지 않으므로, 버리고 새로 붙어야 한다.
+      console.warn("discord: AUTHENTICATE 실패", JSON.stringify(auth.data));
+      teardown();
+      scheduleReconnect();
+      return;
+    }
     await call("GET_VOICE_SETTINGS").then(applyVoiceSettings);
     // 음성 이벤트 구독. 실패해도 mute 표시는 계속 동작한다.
     void call("SUBSCRIBE", {}, "VOICE_SETTINGS_UPDATE");
     void call("SUBSCRIBE", {}, "VOICE_CHANNEL_SELECT");
+    if (stale(sock)) return;
     await refreshChannel();
-    state = { ...state };
   };
 
   return {
