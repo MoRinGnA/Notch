@@ -1,7 +1,31 @@
+@font-face {
+  font-family: "Pretendard Variable";
+  src: url("./fonts/PretendardVariable.woff2") format("woff2");
+  font-weight: 45 920;
+  font-style: normal;
+  font-display: swap;
+}
+
+@property --notch-accent {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #f4f4f6;
+}
+
 :root {
-  --notch-accent: #d0fc7e;
+  --notch-bg: #000000;
+  --notch-tile: #141416;
+  --notch-tile-high: #1f1f23;
+  --notch-line: #2c2c31;
+  --notch-text: #f4f4f6;
+  --notch-text-dim: #8c8c93;
+  --notch-accent: #f4f4f6;
+  --notch-ok: #10b981;
+  --notch-mute: #f43f5e;
+  --notch-warn: #f59e0b;
+  --notch-collapsed-w: 440px;
   color-scheme: dark;
-  font-family: "Courier New", "Cascadia Mono", monospace;
+  font-family: "Pretendard Variable", Pretendard, "Segoe UI Variable Text", "Segoe UI", "Malgun Gothic", system-ui, sans-serif;
   background: transparent;
 }
 
@@ -83,6 +107,18 @@ body,
 .notch-body::after {
   left: 100%;
   background: radial-gradient(circle at 100% 100%, transparent 7.5px, #0f140a 8px);
+}
+
+/* 접힌 상태: 배경은 순흑으로 두고 미디어 정보만 한 줄로 보여준다. */
+.notch.is-collapsed .notch-body {
+  background: var(--notch-bg);
+  box-shadow: none;
+}
+.notch.is-collapsed .notch-body::before {
+  background: radial-gradient(circle at 0 100%, transparent 7.5px, var(--notch-bg) 8px);
+}
+.notch.is-collapsed .notch-body::after {
+  background: radial-gradient(circle at 100% 100%, transparent 7.5px, var(--notch-bg) 8px);
 }
 
 /* 생동감 있는 눈 */
@@ -186,6 +222,38 @@ body,
   max-width: 100%;
   justify-content: flex-start;
 }
+
+/* 접힌 미디어: 이미지와 가사, 재생 상태를 한 줄에 둔다. */
+.notch.is-collapsed .notch-now {
+  width: 100%;
+  max-width: 100%;
+  justify-content: flex-start;
+  gap: 10px;
+  font-family: "Pretendard Variable", Pretendard, "Segoe UI Variable Text", "Segoe UI", "Malgun Gothic", system-ui, sans-serif;
+  color: var(--notch-text);
+}
+.notch-now-art {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  border-radius: 6px;
+  object-fit: cover;
+}
+.notch-now .notch-now-lyric {
+  color: var(--notch-text);
+  font-size: 13px;
+  font-weight: 500;
+}
+.notch-now .notch-eq { flex: none; }
+.notch:not(.is-playing) .notch-now .notch-eq { display: flex; }
+.notch:not(.is-playing) .notch-now .notch-eq i { animation-play-state: paused; }
+.notch-now .notch-eq i { background: var(--notch-text-dim); }
+.notch.is-collapsed.has-voice .notch-now { padding-right: 34px; }
+.notch.is-collapsed.has-status .notch-now { padding-right: 40px; }
+.notch.is-collapsed.has-voice.has-status .notch-now { padding-right: 75px; }
+.notch.is-collapsed .notch-status { display: flex; align-items: center; gap: 3px; color: var(--notch-ok); background: none; }
+.notch.is-collapsed .notch-status.is-low { color: var(--notch-warn); }
+.notch-status svg { width: 14px; height: 14px; stroke-width: 1.75; }
 
 /* 왼쪽: 작은 가수 이름 위에 곡 제목 */
 .notch-now-track {

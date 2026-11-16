@@ -9,6 +9,8 @@ import { fetchLyrics, type Lyrics } from "./lyrics";
 import { cleanTitle, trackName, artistName, displayArtist } from "./mediaText";
 import { SoundMixer, VolumeDeck } from "./AudioControls";
 import { DiscordLink, MicStatus, VoiceNow, VoicePanel } from "./VoiceControls";
+import { BatteryLow, Music, Settings2, Zap } from "lucide-react";
+import { useAccent } from "./useAccent";
 
 interface NotchProps {
   expanded: boolean;
@@ -413,6 +415,7 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
   };
 
   const hasMedia = media.active && media.title.length > 0;
+  const accent = useAccent(hasMedia ? media.thumbnail || ytThumb : "");
   const shownTitle = cleanTitle(media.title);
   // 같은 앱의 탭이 둘 이상이면 번호를 붙여 어느 쪽인지 구분한다.
   const sourceChips = (() => {
@@ -581,14 +584,6 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
 
   // 배터리는 평소에 숨기고, 충전 중이거나 30% 이하일 때만 글자로 알린다.
   const lowBattery = !!battery?.hasBattery && !battery.charging && battery.percent <= 30;
-  const footerLabel =
-    battery && !battery.hasBattery
-      ? "NOTCH"
-      : battery?.hasBattery && battery.charging
-        ? `CHARGE ${battery.percent}%`
-        : lowBattery
-          ? `LOW ${battery.percent}%`
-          : "NOTCH-01";
   const collapsedBadge = battery?.hasBattery
     ? battery.charging
       ? "bolt"
@@ -602,10 +597,6 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
   // 음성 채널에 있을 때는 오른쪽 자리를 마이크 표시에 내준다.
   const voiceActive = !!voice?.inChannel;
   const showMic = !expanded && voiceActive;
-  const footerText =
-    showMic || (expanded && view === "media" && !(battery?.hasBattery && (battery.charging || lowBattery)))
-      ? ""
-      : footerLabel;
   const progress = media.duration > 0 ? Math.min(1, Math.max(0, livePosition / media.duration)) : 0;
   const hudDate = new Date(hudNow);
   const pad2 = (value: number) => String(value).padStart(2, "0");
@@ -705,6 +696,7 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
       className={`notch ${expanded ? "is-expanded" : "is-collapsed"}${view === "media" ? " has-media" : ""}${view === "hud" && !mixOpen && !voiceOpen && !linkOpen ? " has-hud" : ""}${mixOpen ? " has-mix" : ""}${media.status === "Playing" ? " is-playing" : ""}${!expanded && collapsedBadge ? " has-status" : ""}${showMic ? " has-voice" : ""}`}
       style={{
         ...(notchWidth ? { width: `${notchWidth}px` } : {}),
+        "--notch-accent": accent,
       } as CSSProperties}
       onClick={(event) => {
         // 마이크 아이콘의 클릭은 상위로 올리지 않는다(노치 고정/해제로 새면 안 됨).
@@ -728,49 +720,28 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
       aria-label="Notch"
     >
       <span className="notch-body" />
-      {view === "media" ? (
-        <span className={`notch-now${collapsedLyric ? " has-lyric" : ""}`}>
-          <span className="notch-now-track">
-            {media.artist && <span className="notch-now-artist">{displayArtist(media.artist)}</span>}
-            <ScrollingTitle text={shownTitle} className="notch-now-title" />
-          </span>
-          {collapsedLyric && <span className="notch-now-rule" aria-hidden="true" />}
-          {collapsedLyric && (
-            <span className="notch-now-lyric">
-              <span className="notch-now-lyric-line">
-                {collapsedLyric}
-                {collapsedShine && (
-                  <span
-                    key={activeLine}
-                    className="notch-now-shine"
-                    aria-hidden="true"
-                    style={{ maskPosition: shinePosition, WebkitMaskPosition: shinePosition }}
-                  >
-                    {collapsedLyric}
-                  </span>
-                )}
-              </span>
+      {view === "media" && (
+        <span className="notch-now">
+          {media.thumbnail || ytThumb ? <img className="notch-now-art" src={media.thumbnail || ytThumb} alt="" /> : <Music className="notch-now-art" aria-hidden="true" strokeWidth={1.75} />}
+          <span className="notch-now-lyric">
+            <span className="notch-now-lyric-line" key={activeLine}>
+              {collapsedLyric || shownTitle}
+              {collapsedShine && <span className="notch-now-shine" aria-hidden="true" style={{ maskPosition: shinePosition, WebkitMaskPosition: shinePosition }}>{collapsedLyric}</span>}
             </span>
-          )}
-        </span>
-      ) : (
-        <span className="notch-eyes">
-          <span className="notch-eye" />
-          <span className="notch-eye" />
+          </span>
+          <span className="notch-eq" aria-hidden="true"><i /><i /><i /></span>
         </span>
       )}
-      {footerText && <span className={`notch-title${lowBattery ? " is-low" : ""}`}>{footerText}</span>}
       {showMic && voice && (
         <>
           <VoiceNow voice={voice} />
           <MicStatus voice={voice} onToggle={toggleVoice} />
         </>
       )}
-      {collapsedBadge === "bolt" ? (
-        <span className="notch-bolt" aria-label="충전 중" />
-      ) : collapsedBadge ? (
-        <span className={`notch-status${lowBattery ? " is-low" : ""}`}>{collapsedBadge}</span>
-      ) : null}
+      {collapsedBadge && <span className={`notch-status${lowBattery ? " is-low" : ""}`}>
+        {collapsedBadge === "bolt" ? <Zap aria-label="충전 중" /> : lowBattery ? <BatteryLow aria-label="배터리 부족" /> : <Settings2 aria-label="출력 장치 변경" />}
+        {battery?.hasBattery && (battery.charging || lowBattery) ? `${battery.percent}%` : null}
+      </span>}
       {/* 접힌 동안 패널 안의 버튼이 탭으로 잡히지 않게 inert를 준다. */}
       <div className="notch-panel" inert={!expanded}>
         <div className="notch-main">
@@ -955,7 +926,6 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
         )}
         </div>
       </div>
-      <span className="notch-scan" />
     </div>
   );
 }
