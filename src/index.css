@@ -216,16 +216,6 @@ body,
   letter-spacing: normal;
 }
 
-/* 보이지 않는 폭 측정용: 곡에서 가장 긴 가사 줄 */
-.notch-now-lyric-sizer {
-  position: absolute;
-  left: 0;
-  top: 0;
-  visibility: hidden;
-  pointer-events: none;
-  white-space: nowrap;
-}
-
 .notch-now-lyric-line {
   position: relative;
   display: block;

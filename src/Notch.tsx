@@ -206,11 +206,6 @@ function ScrollingTitle({ text, className }: { text: string; className: string }
 
 export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, onHoverEnd }: NotchProps) {
   const notchRef = useRef<HTMLDivElement>(null);
-  // 접힌 미디어 행: 곡 정보(왼쪽)와 현재 가사(오른쪽)
-  const trackRef = useRef<HTMLSpanElement>(null);
-  const lyricSizerRef = useRef<HTMLSpanElement>(null);
-  // 곡에서 가장 긴 가사 줄에 맞춘 접힌 노치 폭. 가사가 없으면 null(내용 폭).
-  const [collapsedWidth, setCollapsedWidth] = useState<number | null>(null);
   // 펼친 화면도 같은 가사 줄이 한 줄에 들어오도록 넓힌다.
   const lineMeasureRef = useRef<HTMLSpanElement>(null);
   const [expandedWidth, setExpandedWidth] = useState<number | null>(null);
@@ -660,39 +655,6 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
   // 접힌 가사에도 같은 빛살을 흘린다. 빈 줄(간주)에서는 이전 가사가 남아 있으므로 빛은 두지 않는다.
   const collapsedShine = hasSynced && !!lyrics.synced[activeLine]?.text && !!collapsedLyric;
 
-  // 곡이 바뀔 때 가장 긴 가사 줄이 들어갈 만큼만 노치를 넓히고, 곡이 끝날 때까지 폭을 유지한다.
-  useEffect(() => {
-    if (!collapsedLyric) {
-      setCollapsedWidth(null);
-      return;
-    }
-    // 펼치는 동안에는 접힌 폭을 그대로 두어 넓어지는 시작점으로 쓴다.
-    if (expanded) return;
-    const notch = notchRef.current;
-    const track = trackRef.current;
-    const sizer = lyricSizerRef.current;
-    if (!notch || !track || !sizer) return;
-    let cancelled = false;
-    const measure = () => {
-      if (cancelled) return;
-      const style = getComputedStyle(notch);
-      const padding = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
-      // 곡 정보 시작점부터 가장 긴 가사 끝까지. 구분선과 칸 사이 간격도 그대로 포함된다.
-      const content = sizer.getBoundingClientRect().right - track.getBoundingClientRect().left;
-      const width = Math.ceil(content + padding);
-      setCollapsedWidth((previous) => (previous === width ? previous : width));
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(track);
-    observer.observe(sizer);
-    void document.fonts.ready.then(measure);
-    return () => {
-      cancelled = true;
-      observer.disconnect();
-    };
-  }, [expanded, collapsedLyric, widestLyric, shownTitle, collapsedBadge]);
-
   // 펼친 화면: 가장 긴 가사 줄이 두 줄로 접히지 않을 만큼만 넓힌다(좌우 여백 56 + 여유).
   useEffect(() => {
     if (!expanded || view !== "media" || !hasSynced || !widestLyric) {
@@ -723,7 +685,7 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
         : view === "media"
           ? EXPANDED_WIDTH
           : HUD_WIDTH
-    : collapsedWidth;
+    : view === "media" ? 440 : null;
 
   const showArt = lyrics.state === "missing" || lyrics.state === "instrumental" || lyrics.state === "idle";
   const lyricsText =
@@ -768,14 +730,13 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
       <span className="notch-body" />
       {view === "media" ? (
         <span className={`notch-now${collapsedLyric ? " has-lyric" : ""}`}>
-          <span ref={trackRef} className="notch-now-track">
+          <span className="notch-now-track">
             {media.artist && <span className="notch-now-artist">{displayArtist(media.artist)}</span>}
             <ScrollingTitle text={shownTitle} className="notch-now-title" />
           </span>
           {collapsedLyric && <span className="notch-now-rule" aria-hidden="true" />}
           {collapsedLyric && (
             <span className="notch-now-lyric">
-              <span ref={lyricSizerRef} className="notch-now-lyric-sizer" aria-hidden="true">{widestLyric}</span>
               <span className="notch-now-lyric-line">
                 {collapsedLyric}
                 {collapsedShine && (
