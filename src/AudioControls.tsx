@@ -1,9 +1,10 @@
+import { Volume2, VolumeX } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 
 // 미디어 키·다른 앱의 볼륨 변경도 놓치지 않을 만큼 짧게 확인한다.
 const VOLUME_POLL_MS = 300;
 // 10%마다 눈금을 세우고, 50%마다 길게 세워 값을 눈으로 어림하기 쉽게 한다.
-const VOLUME_TICKS = Array.from({ length: 11 }, (_, index) => index * 10);
+
 
 // 시스템 마스터 볼륨. 부드러운 프로그래스 바 대신, 눈금 셀 사다리·커서·반전 플레이트로 값을 읽는 계기판.
 export function VolumeDeck({ active, onOpenMixer }: { active: boolean; onOpenMixer?: () => void }) {
@@ -181,7 +182,7 @@ export function VolumeDeck({ active, onOpenMixer }: { active: boolean; onOpenMix
   const muted = volume?.muted ?? false;
   // 마우스로 훑는 동안에는 실제 값과 목표 값 사이를 미리 보여준다.
   const preview = !dragging && hover !== null && volume !== null && hover !== level ? hover : null;
-  const readout = volume === null ? "---" : String(preview ?? level).padStart(3, "0");
+  const readout = volume === null ? "–" : String(preview ?? level);
 
   return (
     <div
@@ -200,10 +201,10 @@ export function VolumeDeck({ active, onOpenMixer }: { active: boolean; onOpenMix
             onOpenMixer();
           }}
         >
-          VOL
+          <Volume2 size={18} strokeWidth={1.75} />
         </button>
       ) : (
-        <span className="notch-vol-label">VOL</span>
+        <Volume2 size={18} strokeWidth={1.75} aria-hidden="true" />
       )}
       <span
         ref={trackRef}
@@ -225,15 +226,6 @@ export function VolumeDeck({ active, onOpenMixer }: { active: boolean; onOpenMix
       >
         <span className="notch-vol-rail" aria-hidden="true" />
         <span className="notch-vol-fill" aria-hidden="true" style={{ width: `${level}%` }} />
-        <span className="notch-vol-ticks" aria-hidden="true">
-          {VOLUME_TICKS.map((tick) => (
-            <span
-              key={tick}
-              className={`notch-vol-tick${tick % 50 === 0 ? " is-major" : ""}`}
-              style={{ left: `${tick}%` }}
-            />
-          ))}
-        </span>
         {preview !== null && (
           <span className="notch-vol-ghost" aria-hidden="true" style={{ left: `${preview}%` }} />
         )}
@@ -242,7 +234,7 @@ export function VolumeDeck({ active, onOpenMixer }: { active: boolean; onOpenMix
         )}
       </span>
       <span className={`notch-vol-value${muted ? " is-muted" : ""}${preview !== null ? " is-target" : ""}`}>
-        {readout}
+        {(dragging || preview !== null) && readout}
       </span>
       <button
         type="button"
@@ -256,7 +248,7 @@ export function VolumeDeck({ active, onOpenMixer }: { active: boolean; onOpenMix
           toggleMute();
         }}
       >
-        M
+        {muted ? <VolumeX size={18} strokeWidth={1.75} /> : <Volume2 size={18} strokeWidth={1.75} />}
       </button>
     </div>
   );
@@ -287,6 +279,8 @@ function MixRow({
 }) {
   const trackRef = useRef<HTMLSpanElement>(null);
   const draggingRef = useRef(false);
+  const [dragging, setDragging] = useState(false);
+  const [hover, setHover] = useState<number | null>(null);
   const level = Math.max(0, Math.min(100, rawLevel));
   // 빠르게 연속으로 눌러도 한 번에 한 칸씩 오르도록 마지막 값을 따로 들고 있다.
   const levelRef = useRef(level);
@@ -310,11 +304,12 @@ function MixRow({
     event.currentTarget.setPointerCapture(event.pointerId);
     draggingRef.current = true;
     onBusy(true);
+    setDragging(true);
     onLevel(levelAt(event.clientX));
   };
 
   const moveDrag = (event: PointerEvent<HTMLSpanElement>) => {
-    if (!draggingRef.current) return;
+    if (!draggingRef.current) { setHover(levelAt(event.clientX)); return; }
     event.stopPropagation();
     onLevel(levelAt(event.clientX));
   };
@@ -323,6 +318,7 @@ function MixRow({
     if (!draggingRef.current) return;
     draggingRef.current = false;
     onBusy(false);
+    setDragging(false);
     const track = event.currentTarget;
     if (track.hasPointerCapture(event.pointerId)) track.releasePointerCapture(event.pointerId);
   };
@@ -342,7 +338,7 @@ function MixRow({
 
   return (
     <div
-      className={`notch-mix-row${master ? " is-master" : ""}${muted ? " is-muted" : ""}${unavailable ? " is-off" : ""}`}
+      className={`notch-mix-row${master ? " is-master" : ""}${muted ? " is-muted" : ""}${unavailable ? " is-off" : ""}${dragging ? " is-live" : ""}`}
       onClick={(event) => event.stopPropagation()}
     >
       <span className="notch-mix-name" title={label}>{label}</span>
@@ -368,23 +364,15 @@ function MixRow({
         onPointerMove={moveDrag}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
+        onPointerLeave={() => setHover(null)}
         onKeyDown={handleKey}
       >
         <span className="notch-vol-rail" aria-hidden="true" />
         <span className="notch-vol-fill" aria-hidden="true" style={{ width: `${level}%` }} />
-        <span className="notch-vol-ticks" aria-hidden="true">
-          {VOLUME_TICKS.map((tick) => (
-            <span
-              key={tick}
-              className={`notch-vol-tick${tick % 50 === 0 ? " is-major" : ""}`}
-              style={{ left: `${tick}%` }}
-            />
-          ))}
-        </span>
         <span className="notch-vol-cursor" aria-hidden="true" style={{ left: `${level}%` }} />
       </span>
       <span className={`notch-vol-value${muted ? " is-muted" : ""}`}>
-        {unavailable ? "---" : String(level).padStart(3, "0")}
+        {!unavailable && (dragging || hover !== null) ? String(dragging ? level : hover) : ""}
       </span>
       <button
         type="button"
@@ -398,7 +386,7 @@ function MixRow({
           onMute(!muted);
         }}
       >
-        M
+        {muted ? <VolumeX size={18} strokeWidth={1.75} /> : <Volume2 size={18} strokeWidth={1.75} />}
       </button>
     </div>
   );
@@ -531,12 +519,12 @@ export function SoundMixer({ active, onClose }: { active: boolean; onClose: () =
   return (
     <div className="notch-mix">
       <span className="notch-mix-head">
-        <span className="notch-mix-title">SOUND</span>
+        <span className="notch-mix-title">소리</span>
         <span className="notch-mix-device" title={device}>{device || "출력 장치"}</span>
       </span>
       <div className="notch-mix-list">
         <MixRow
-          label="MASTER"
+          label="전체 볼륨"
           master
           level={master?.level ?? 0}
           muted={master?.muted ?? false}
@@ -554,7 +542,7 @@ export function SoundMixer({ active, onClose }: { active: boolean; onClose: () =
           apps.map((app) => (
             <MixRow
               key={app.pid}
-              label={app.name.toUpperCase()}
+              label={app.name}
               level={app.level}
               muted={app.muted}
               peak={peaks[app.pid] ?? 0}
@@ -576,7 +564,7 @@ export function SoundMixer({ active, onClose }: { active: boolean; onClose: () =
             onClose();
           }}
         >
-          BACK
+          뒤로
         </button>
         <button
           type="button"
@@ -586,7 +574,7 @@ export function SoundMixer({ active, onClose }: { active: boolean; onClose: () =
             void window.notchApi?.openSoundSettings();
           }}
         >
-          SOUND SETTINGS
+          소리 설정
         </button>
       </span>
     </div>

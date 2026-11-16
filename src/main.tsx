@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { App } from "./App";
 import "@fontsource/orbit";
 import "./index.css";
+import "./media-redesign.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

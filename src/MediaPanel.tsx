@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type MouseEvent, type 
 import { VolumeDeck } from "./AudioControls";
 import { MicStatus } from "./VoiceControls";
 import { displayArtist } from "./mediaText";
+import { Music, SkipBack, SkipForward, Play, Pause } from "lucide-react";
 import type { Lyrics } from "./lyrics";
 
 // 초를 m:ss 로 표시한다.
@@ -54,30 +55,13 @@ function ScrollingTitle({ text, className }: { text: string; className: string }
 export function MediaPanel({ shownTitle, hasMedia, media, metaAlbum, livePosition, progress, sourceChips, playPending, selectSource, hasSynced, activeLine, lyrics, shinePosition, showArt, ytThumb, lyricsText, lineMeasureRef, widestLyric, voiceActive, voice, openVoice, toggleVoice, control, expanded, openMix }: { shownTitle: string; hasMedia: boolean; media: NotchMedia; metaAlbum: string; livePosition: number; progress: number; sourceChips: (NotchMediaSource & { label: string })[]; playPending: boolean; selectSource: (id: string) => void; hasSynced: boolean; activeLine: number; lyrics: Lyrics; shinePosition: string; showArt: boolean; ytThumb: string; lyricsText: string; lineMeasureRef: RefObject<HTMLSpanElement | null>; widestLyric: string; voiceActive: boolean; voice: NotchVoice | null; openVoice: () => void; toggleVoice: (patch: { mute?: boolean; deaf?: boolean }) => void; control: (action: "Play" | "Previous" | "Next") => (event: MouseEvent) => void; expanded: boolean; openMix: () => void }) {
   return (
           <>
-        <div className="notch-info">
-          <span className="notch-info-row">
-            <span className="notch-eq" aria-hidden="true">
-              <i />
-              <i />
-              <i />
-            </span>
-            <span className="notch-stop" aria-hidden="true" />
+        <div className="notch-tile notch-info">
+          {media.thumbnail || ytThumb ? <img className="notch-cover" src={media.thumbnail || ytThumb} alt="" /> : <Music className="notch-cover" aria-hidden="true" strokeWidth={1.75} />}
+          <span className="notch-meta">
             <ScrollingTitle text={shownTitle} className="notch-info-title" />
+            {displayArtist(media.artist) && <span className="notch-info-meta">{displayArtist(media.artist)}</span>}
+            {metaAlbum && <span className="notch-info-meta">{metaAlbum}</span>}
           </span>
-          {hasMedia && (displayArtist(media.artist) || metaAlbum) && (
-            <span className="notch-info-meta">
-              {[displayArtist(media.artist), metaAlbum].filter(Boolean).join(" · ")}
-            </span>
-          )}
-        </div>
-        <div className="notch-progress">
-          <span className="notch-time">{hasMedia ? clock(livePosition) : "--:--"}</span>
-          <span className="notch-seg" aria-label="재생 진행률">
-            <span className="notch-seg-fill" style={{ transform: `scaleX(${progress})` }} />
-            <span className="notch-seg-head" style={{ left: `${progress * 100}%` }} />
-          </span>
-          <span className="notch-time">{hasMedia ? clock(media.duration) : "--:--"}</span>
-        </div>
         {sourceChips.length > 1 && (
           <div className="notch-sources" role="group" aria-label="재생 소스">
             {sourceChips.map((source) => (
@@ -95,6 +79,8 @@ export function MediaPanel({ shownTitle, hasMedia, media, metaAlbum, livePositio
             ))}
           </div>
         )}
+        </div>
+        <div className="notch-tile notch-lyrics-tile">
         {hasSynced ? (
           <div className="notch-lyrics notch-lyrics-synced">
             <div key={activeLine} className="notch-line is-active">
@@ -121,9 +107,16 @@ export function MediaPanel({ shownTitle, hasMedia, media, metaAlbum, livePositio
         ) : (
           <div className="notch-lyrics">{lyricsText}</div>
         )}
+        </div>
         {hasSynced && (
           <span ref={lineMeasureRef} className="notch-line-measure" aria-hidden="true">{widestLyric}</span>
         )}
+        <div className="notch-tile notch-player">
+          <div className="notch-progress">
+            <span className="notch-time">{hasMedia ? clock(livePosition) : "–"}</span>
+            <span className="notch-seg" aria-label="재생 진행률"><span className="notch-seg-fill" style={{ transform: `scaleX(${progress})` }} /><span className="notch-seg-head" style={{ left: `${progress * 100}%` }} /></span>
+            <span className="notch-time">{hasMedia ? clock(media.duration) : "–"}</span>
+          </div>
         <div className="notch-controls">
           <span className="notch-controls-tools">
           {voiceActive && voice && (
@@ -138,7 +131,7 @@ export function MediaPanel({ shownTitle, hasMedia, media, metaAlbum, livePositio
                   openVoice();
                 }}
               >
-                VOICE
+                음성
               </button>
               <MicStatus voice={voice} inline onToggle={toggleVoice} />
             </>
@@ -146,16 +139,17 @@ export function MediaPanel({ shownTitle, hasMedia, media, metaAlbum, livePositio
           </span>
           <span className="notch-controls-group">
             <button type="button" className="notch-btn" onClick={control("Previous")} disabled={playPending || !media.canPrev} aria-label="이전">
-              PREV
+              <SkipBack size={18} strokeWidth={1.75} />
             </button>
-            <button type="button" className="notch-btn" onClick={control("Play")} disabled={playPending || !media.canPlayPause} aria-label="재생/일시정지">
-              {media.status === "Playing" ? "PAUSE" : "PLAY"}
+            <button type="button" className="notch-btn" onClick={control("Play")} disabled={playPending || !media.canPlayPause} aria-label={media.status === "Playing" ? "일시정지" : "재생"}>
+              {media.status === "Playing" ? <Pause size={18} strokeWidth={1.75} /> : <Play size={18} strokeWidth={1.75} />}
             </button>
             <button type="button" className="notch-btn" onClick={control("Next")} disabled={playPending || !media.canNext} aria-label="다음">
-              NEXT
+              <SkipForward size={18} strokeWidth={1.75} />
             </button>
           </span>
           <VolumeDeck active={expanded} onOpenMixer={openMix} />
+        </div>
         </div>
           </>
   );

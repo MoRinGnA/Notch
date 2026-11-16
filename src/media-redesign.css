@@ -1,0 +1,130 @@
+/* 펼친 미디어: 정보·가사·제어를 불투명한 타일로 나눈다. */
+.notch.has-media.is-expanded .notch-body {
+  background: var(--notch-bg);
+  box-shadow: none;
+}
+.notch.has-media.is-expanded .notch-body::before {
+  background: radial-gradient(circle at 0 100%, transparent 7.5px, var(--notch-bg) 8px);
+}
+.notch.has-media.is-expanded .notch-body::after {
+  background: radial-gradient(circle at 100% 100%, transparent 7.5px, var(--notch-bg) 8px);
+}
+.notch.has-media .notch-panel {
+  inset: 12px;
+  color: var(--notch-text);
+  font-family: "Pretendard Variable", Pretendard, "Segoe UI Variable Text", "Segoe UI", "Malgun Gothic", system-ui, sans-serif;
+}
+.notch.has-media .notch-main { gap: 8px; }
+.notch-tile {
+  box-sizing: border-box;
+  border: 1px solid var(--notch-line);
+  border-radius: 16px;
+  background: var(--notch-tile);
+  padding: 12px;
+  min-width: 0;
+}
+.notch.has-media .notch-info { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0 12px; flex: 0 0 auto; }
+.notch-info .notch-cover { grid-row: span 2; }
+.notch-info .notch-sources { grid-column: 2; }
+.notch-cover { width: 96px; height: 96px; flex: none; object-fit: cover; border-radius: 8px; color: var(--notch-text-dim); }
+.notch-meta { display: flex; flex: 1; min-width: 0; flex-direction: column; justify-content: center; gap: 2px; }
+.notch.has-media .notch-info-title { flex: none; font-size: 14px; font-weight: 600; color: var(--notch-text); }
+.notch.has-media .notch-info-meta { font-size: 12px; line-height: 1.5; color: var(--notch-text-dim); }
+.notch-lyrics-tile { flex: 1; min-height: 35px; display: flex; overflow: hidden; }
+.notch-lyrics-tile .notch-lyrics { color: var(--notch-text); font-size: 12px; }
+.notch-lyrics-tile .notch-line { color: var(--notch-text); font-size: 20px; font-weight: 600; line-height: 1.4; }
+.notch-line-measure { font-family: "Pretendard Variable", Pretendard, "Segoe UI Variable Text", "Segoe UI", "Malgun Gothic", system-ui, sans-serif; font-size: 20px; font-weight: 600; }
+.notch-line-shine { color: var(--notch-accent); }
+.notch-player { flex: none; display: flex; flex-direction: column; gap: 8px; }
+.notch-player .notch-time { color: var(--notch-text-dim); font-family: inherit; font-size: 12px; font-variant-numeric: tabular-nums; letter-spacing: normal; }
+.notch-player .notch-seg { height: 4px; border-radius: 4px; background: var(--notch-tile-high); }
+.notch-player .notch-seg-fill { background: var(--notch-accent); border-radius: inherit; }
+.notch-player .notch-seg-head { top: -2px; width: 8px; height: 8px; border-radius: 50%; background: var(--notch-accent); }
+.notch-player .notch-btn { display: grid; place-items: center; padding: 2px; color: var(--notch-text); }
+.notch-player .notch-controls-group { gap: 16px; }
+.notch-player .notch-btn:hover:not(:disabled) { background: var(--notch-tile-high); color: var(--notch-text); border-radius: 6px; }
+
+/* HUD는 시각/날씨, 시스템 판독, 볼륨의 세 타일을 사용한다. */
+.notch.has-hud.is-expanded { height: 272px; }
+.notch.has-hud .notch-body { background: var(--notch-bg); box-shadow: none; }
+.notch.has-hud .notch-body::before { background: radial-gradient(circle at 0 100%, transparent 7.5px, var(--notch-bg) 8px); }
+.notch.has-hud .notch-body::after { background: radial-gradient(circle at 100% 100%, transparent 7.5px, var(--notch-bg) 8px); }
+.notch.has-hud .notch-panel { inset: 12px; color: var(--notch-text); font-family: "Pretendard Variable", Pretendard, "Segoe UI Variable Text", "Segoe UI", "Malgun Gothic", system-ui, sans-serif; }
+.notch-hud { gap: 8px; justify-content: stretch; font-family: inherit; color: var(--notch-text); }
+.notch-hud-grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 8px; flex: 1; min-height: 0; }
+.notch-hud-time { display: flex; flex-direction: column; justify-content: center; gap: 8px; }
+.notch-hud-clock { font-size: 40px; font-weight: 600; letter-spacing: normal; text-shadow: none; color: var(--notch-text); }
+.notch-hud-sec { color: var(--notch-text-dim); }
+.notch-hud-date, .notch-hud-weather { font-size: 12px; line-height: 1.5; letter-spacing: normal; color: var(--notch-text-dim); }
+.notch-hud-weather { display: flex; align-items: center; gap: 6px; }
+.notch-hud-reads { display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 14px; }
+.notch-hud-read { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.notch-hud-label { font-size: 12px; letter-spacing: normal; color: var(--notch-text-dim); }
+.notch-hud-value { font-size: 24px; font-weight: 600; text-shadow: none; color: var(--notch-text); }
+.notch-hud-unit { font-size: 12px; color: var(--notch-text-dim); }
+.notch-warning { width: 6px; height: 6px; border-radius: 50%; background: var(--notch-warn); align-self: center; margin-left: 4px; }
+.notch-hud-volume { display: flex; align-items: center; gap: 12px; }
+.notch-hud-volume .notch-vol { flex: 1; }
+.notch-hud-volume .notch-hud-foot { flex: none; }
+
+/* 슬라이더 입력 영역은 유지하고 보이는 레일만 간결한 캡슐로 바꾼다. */
+.notch .notch-vol-track { height: 20px; }
+.notch .notch-vol-rail, .notch .notch-vol-fill { height: 6px; margin-top: -3px; border-radius: 6px; }
+.notch .notch-vol-rail { background: var(--notch-tile-high); }
+.notch .notch-vol-fill { background: var(--notch-text); }
+.notch .is-muted .notch-vol-fill { background: var(--notch-text-dim); }
+.notch .notch-vol-cursor { top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: var(--notch-text); opacity: 0; }
+.notch .notch-vol-cursor::before { display: none; }
+.notch .notch-vol-track:hover .notch-vol-cursor, .notch .notch-vol-track:focus-visible .notch-vol-cursor, .notch .is-live .notch-vol-cursor { opacity: 1; }
+.notch .notch-vol-ghost { background: var(--notch-text-dim); }
+.notch .notch-vol-value { min-width: 3ch; font-family: inherit; font-size: 12px; letter-spacing: normal; color: var(--notch-text); }
+.notch .notch-vol-label, .notch .notch-vol-mute { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; background: transparent; color: var(--notch-text); }
+.notch .notch-vol-mute.is-on { color: var(--notch-mute); background: transparent; }
+.notch .notch-mix, .notch .notch-voice, .notch .notch-link { box-sizing: border-box; border: 1px solid var(--notch-line); border-radius: 16px; background: var(--notch-tile); padding: 12px; color: var(--notch-text); font-family: "Pretendard Variable", Pretendard, "Segoe UI Variable Text", "Segoe UI", "Malgun Gothic", system-ui, sans-serif; }
+.notch .notch-mix-row, .notch .notch-voice-row { min-height: 36px; }
+.notch .notch-mix-peak { bottom: 0; height: 100%; background: var(--notch-text); opacity: 0.12; }
+.notch .notch-mix-name, .notch .notch-mix-title, .notch .notch-voice-title, .notch .notch-link-title, .notch .notch-voice-row, .notch .notch-link-note, .notch .notch-link-status, .notch .notch-link-input, .notch .notch-voice-count, .notch .notch-mix-empty, .notch .notch-voice-empty, .notch .notch-mix-device { font-family: inherit; font-size: 12px; letter-spacing: normal; color: var(--notch-text); }
+.notch .notch-btn, .notch .notch-tool-label { font-family: inherit; font-size: 12px; letter-spacing: normal; color: var(--notch-text); }
+.notch .notch-mic { color: var(--notch-text); }
+.notch .notch-mic.is-speaking { color: var(--notch-ok); }
+.notch .notch-mic.is-muted, .notch .notch-voice-flag { color: var(--notch-mute); }
+.notch :focus-visible { outline: 2px solid var(--notch-text); outline-offset: 2px; }
+
+/* 모든 펼친 화면에서 본체는 불투명한 검정이며 타일만 밝힌다. */
+.notch.is-expanded .notch-body { background: var(--notch-bg); box-shadow: none; }
+.notch.is-expanded .notch-body::before { background: radial-gradient(circle at 0 100%, transparent 7.5px, var(--notch-bg) 8px); }
+.notch.is-expanded .notch-body::after { background: radial-gradient(circle at 100% 100%, transparent 7.5px, var(--notch-bg) 8px); }
+.notch.is-expanded { height: 320px; border-radius: 0 0 28px 28px; }
+.notch.has-hud.is-expanded { height: 272px; }
+.notch.is-expanded .notch-panel { inset: 12px; font-family: "Pretendard Variable", Pretendard, "Segoe UI Variable Text", "Segoe UI", "Malgun Gothic", system-ui, sans-serif; color: var(--notch-text); }
+.notch-main { gap: 8px; }
+.notch-source { border: 1px solid var(--notch-line); border-radius: 6px; background: var(--notch-tile-high); color: var(--notch-text-dim); font-family: inherit; font-size: 12px; letter-spacing: normal; }
+.notch-source.is-on { background: var(--notch-text); border-color: var(--notch-text); color: var(--notch-bg); }
+.notch-art-still-img { filter: none; }
+.notch-art-still::after { display: none; }
+.notch .notch-device-note { margin: 0; padding: 8px 12px; border: 1px solid var(--notch-line); border-radius: 12px; background: var(--notch-tile); }
+.notch .notch-device-note-text { display: flex; align-items: center; gap: 6px; font-family: inherit; font-size: 12px; line-height: 1.5; color: var(--notch-text); letter-spacing: normal; }
+.notch .notch-device-note-btn { font-family: inherit; font-size: 12px; line-height: 1.5; letter-spacing: normal; color: var(--notch-text); }
+.notch .notch-link-input { background: var(--notch-tile-high); border-color: var(--notch-line); letter-spacing: normal; }
+.notch .notch-link-input::placeholder, .notch .notch-link-state { color: var(--notch-text-dim); }
+.notch .notch-link-status.is-error { color: var(--notch-mute); }
+.notch .notch-btn:hover:not(:disabled), .notch .notch-device-note-btn:hover { background: var(--notch-tile-high); border-color: var(--notch-line); color: var(--notch-text); }
+.notch .notch-vol-value.is-muted, .notch .notch-vol-value.is-target { color: var(--notch-text-dim); }
+.notch .notch-mix-row.is-muted .notch-mix-peak { opacity: 0.12; }
+.notch .notch-voice-now { color: var(--notch-ok); font-family: inherit; }
+.notch .notch-voice-row.is-speaking { color: var(--notch-ok); }
+.notch-now-shine { color: var(--notch-accent); }
+.notch .notch-hud-volume .notch-vol { width: auto; }
+.notch.is-collapsed { width: 154px; padding: 0; border-radius: 0 0 20px 20px; }
+.notch.is-collapsed.has-media { padding: 0 16px; }
+.notch.is-collapsed.has-media .notch-now { box-sizing: border-box; }
+.notch.is-collapsed .notch-status { font-family: inherit; font-size: 11px; letter-spacing: normal; }
+.notch.is-collapsed .notch-status:not(.is-low) { color: var(--notch-text); }
+.notch.has-media .notch-cover, .notch-now-art { background-color: var(--notch-accent); }
+.notch .notch-art-still { border-color: var(--notch-line); }
+.notch .notch-art-note { color: var(--notch-text-dim); }
+.notch .notch-mix-head, .notch .notch-voice-head, .notch .notch-link-head { border-color: var(--notch-line); }
+.notch .notch-vol-track:focus-visible::after { border-color: var(--notch-text); border-style: solid; }
+.notch .notch-vol-mute:hover:not(:disabled), .notch .notch-vol:hover .notch-vol-label { color: var(--notch-text); }
+.notch .notch-btn:active:not(:disabled) { background: var(--notch-line); color: var(--notch-text); }
+@supports (corner-shape: squircle) { .notch, .notch-tile, .notch-mix, .notch-voice, .notch-link { corner-shape: squircle; } }

@@ -1,3 +1,4 @@
+import { Mic, MicOff, HeadphoneOff } from "lucide-react";
 import { useEffect, useState } from "react";
 
 // 클립보드 기록 화면. 항목을 누르면 그 내용이 다시 클립보드로 들어간다.
@@ -40,17 +41,8 @@ export function MicStatus({
         onToggle({ deaf: !voice.deafened });
       }}
     >
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <rect className="notch-mic-body" x="9" y="2.5" width="6" height="11" rx="3" />
-        <path className="notch-mic-arc" d="M6 11a6 6 0 0 0 12 0M12 17v3.5M9 20.5h6" />
-        {off && <path className="notch-mic-slash" d="M3.5 3.5l17 17" />}
-        {voice.speaking && !off && (
-          <>
-            <path className="notch-mic-wave is-near" d="M18.5 8.5a4.6 4.6 0 0 1 0 7" />
-            <path className="notch-mic-wave is-far" d="M21.2 6a8.2 8.2 0 0 1 0 12" />
-          </>
-        )}
-      </svg>
+      {off ? <MicOff size={18} strokeWidth={1.75} /> : <Mic size={18} strokeWidth={1.75} />}
+
     </button>
   );
 }
@@ -108,9 +100,9 @@ export function DiscordLink({ onClose }: { onClose: () => void }) {
       onContextMenu={(event) => event.stopPropagation()}
     >
       <span className="notch-link-head">
-        <span className="notch-link-title">DISCORD</span>
+        <span className="notch-link-title">Discord</span>
         <span className="notch-link-state">
-          {linked === null ? "" : linked ? "LINKED" : "NOT LINKED"}
+          {linked === null ? "" : linked ? "연결됨" : "연결 안 됨"}
         </span>
       </span>
       <span className="notch-link-note">
@@ -132,12 +124,12 @@ export function DiscordLink({ onClose }: { onClose: () => void }) {
           autoFocus
           spellCheck={false}
           autoComplete="off"
-          placeholder="CLIENT SECRET"
+          placeholder="클라이언트 시크릿"
           aria-label="디스코드 클라이언트 시크릿"
           onChange={(event) => setSecret(event.target.value)}
         />
         <button type="submit" className="notch-btn" disabled={state === "busy" || secret.trim().length === 0}>
-          {state === "busy" ? "WAIT" : "CONNECT"}
+          {state === "busy" ? "연결 중" : "연결"}
         </button>
       </form>
       <span
@@ -155,7 +147,7 @@ export function DiscordLink({ onClose }: { onClose: () => void }) {
             onClose();
           }}
         >
-          CLOSE
+          닫기
         </button>
       </span>
     </div>
@@ -194,8 +186,8 @@ export function VoicePanel({
       onContextMenu={(event) => event.stopPropagation()}
     >
       <span className="notch-voice-head">
-        <span className="notch-voice-title">{voice.channel || "VOICE"}</span>
-        <span className="notch-voice-count">{`${String(voice.members.length).padStart(2, "0")} IN`}</span>
+        <span className="notch-voice-title">{voice.channel || "음성 채널"}</span>
+        <span className="notch-voice-count">{`${voice.members.length}명`}</span>
       </span>
       <div className="notch-voice-list">
         {voice.members.length === 0 ? (
@@ -214,9 +206,9 @@ export function VoicePanel({
                   {member.self ? `${member.name} (나)` : member.name}
                 </span>
                 {rowDeafened ? (
-                  <span className="notch-voice-flag">DEAF</span>
+                  <HeadphoneOff className="notch-voice-flag" aria-label="헤드셋 꺼짐" size={16} />
                 ) : rowMuted ? (
-                  <span className="notch-voice-flag">MUTE</span>
+                  <MicOff className="notch-voice-flag" aria-label="마이크 꺼짐" size={16} />
                 ) : null}
               </span>
             );
@@ -234,7 +226,7 @@ export function VoicePanel({
               else onToggle({ mute: !muted });
             }}
           >
-            {deafened ? "MIC ON" : muted ? "UNMUTE" : "MUTE"}
+            {deafened ? "마이크 켜기" : muted ? "음소거 해제" : "음소거"}
           </button>
           <button
             type="button"
@@ -244,7 +236,7 @@ export function VoicePanel({
               onToggle({ deaf: !deafened });
             }}
           >
-            {deafened ? "HEADSET ON" : "DEAFEN"}
+            {deafened ? "헤드셋 켜기" : "헤드셋 끄기"}
           </button>
         </span>
         <button
@@ -255,7 +247,7 @@ export function VoicePanel({
             onClose();
           }}
         >
-          CLOSE
+          닫기
         </button>
       </div>
     </div>

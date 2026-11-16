@@ -36,7 +36,7 @@ const BATTERY_POLL_MS = 30000;
 // 펼친 화면의 기본 폭(HUD 또는 미디어 패널).
 const EXPANDED_WIDTH = 600;
 // HUD는 네 줄짜리 판독 화면이라 미디어 패널보다 좁게 잡아 빈 자리를 남기지 않는다.
-const HUD_WIDTH = 480;
+const HUD_WIDTH = 600;
 
 const EMPTY_MEDIA: NotchMedia = {
   active: false,
@@ -66,8 +66,8 @@ function resolveView(hasMedia: boolean): NotchView {
 
 // NOW 화면의 소스 버튼에 쓸 짧은 앱 이름. AUMID 꼬리와 .exe를 떼고 알아보기 쉬운 이름으로 바꾼다.
 const MEDIA_APP_NAMES: Record<string, string> = {
-  chrome: "CHROME", msedge: "EDGE", whale: "WHALE", firefox: "FIREFOX", brave: "BRAVE",
-  opera: "OPERA", vivaldi: "VIVALDI", chromium: "CHROMIUM", arc: "ARC", spotify: "SPOTIFY",
+  chrome: "Chrome", msedge: "Edge", whale: "Whale", firefox: "Firefox", brave: "Brave",
+  opera: "Opera", vivaldi: "Vivaldi", chromium: "Chromium", arc: "Arc", spotify: "Spotify",
 };
 function mediaAppName(app: string): string {
   const target = app.includes("!") ? app.split("!").pop() ?? app : app;
@@ -76,7 +76,7 @@ function mediaAppName(app: string): string {
   // com.example.app 같은 AUMID는 마지막 조각이 알아보기 쉽다.
   if (!/[\\/]/.test(app) && base.includes(".")) base = base.split(".").pop() ?? base;
   const key = base.toLowerCase();
-  return (MEDIA_APP_NAMES[key] ?? base.toUpperCase()).slice(0, 18);
+  return (MEDIA_APP_NAMES[key] ?? base).slice(0, 18);
 }
 
 export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, onHoverEnd }: NotchProps) {
@@ -84,18 +84,6 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
   // 펼친 화면도 같은 가사 줄이 한 줄에 들어오도록 넓힌다.
   const lineMeasureRef = useRef<HTMLSpanElement>(null);
   const [expandedWidth, setExpandedWidth] = useState<number | null>(null);
-  useEffect(() => {
-    const notch = notchRef.current;
-    if (!notch || !window.notchApi) return;
-    const updateBounds = () => {
-      const { x, y, width, height } = notch.getBoundingClientRect();
-      window.notchApi?.setNotchBounds({ x, y, width, height });
-    };
-    const observer = new ResizeObserver(updateBounds);
-    observer.observe(notch);
-    updateBounds();
-    return () => observer.disconnect();
-  }, []);
 
   const [media, setMedia] = useState<NotchMedia>(EMPTY_MEDIA);
   const [lyrics, setLyrics] = useState<Lyrics>({ state: "idle", text: "", synced: [] });
@@ -303,7 +291,7 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
       const label = mediaAppName(source.app);
       const index = (seen.get(label) ?? 0) + 1;
       seen.set(label, index);
-      return { ...source, label: (totals.get(label) ?? 1) > 1 ? `${label}·${index}` : label };
+      return { ...source, label: (totals.get(label) ?? 1) > 1 ? `${label} ${index}` : label };
     });
   })();
   // 직접 고른 세션으로 바꾸고, 다음 폴링을 기다리지 않고 바로 다시 읽는다.
@@ -476,11 +464,11 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
   // 초는 따로 떼어 어둡게, 숫자는 세 칸 고정폭으로 흔들리지 않게.
   const hudHm = `${pad2(hudDate.getHours())}:${pad2(hudDate.getMinutes())}`;
   const hudSec = pad2(hudDate.getSeconds());
-  const hudDay = `${hudDate.getFullYear()}.${pad2(hudDate.getMonth() + 1)}.${pad2(hudDate.getDate())} ${hudDate.toLocaleDateString("en-US", { weekday: "short" }).toUpperCase()}`;
-  const hudTemp = temp === null ? "--" : String(Math.round(temp.value));
+  const hudDay = `${hudDate.getFullYear()}.${pad2(hudDate.getMonth() + 1)}.${pad2(hudDate.getDate())} ${hudDate.toLocaleDateString("ko-KR", { weekday: "short" })}`;
+  const hudTemp = temp === null ? "–" : String(Math.round(temp.value));
   // ACPI 열 구역까지 내려간 값은 CPU 다이 온도가 아니므로 라벨을 바꾼다. 앞자리를 4칸으로 맞춰 숫자 열은 그대로.
   const hudTempLabel = temp?.source === "acpi" ? "ACPI" : "CPU";
-  const hudGpu = gpu === null ? "--" : String(Math.round(gpu));
+  const hudGpu = gpu === null ? "–" : String(Math.round(gpu));
   const tempHot = temp !== null && temp.value >= 85;
   // 제목과 같은 앨범은 중복이라 메타 줄에서 뺀다.
   const metaAlbum =
@@ -531,7 +519,7 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
     const update = () => {
       if (cancelled) return;
       // 미디어 패널과 좌우 여백을 포함한 폭. 가사가 길면 여기서 늘어난다.
-      setExpandedWidth(Math.min(860, Math.max(EXPANDED_WIDTH, Math.ceil(measure.offsetWidth + 200))));
+      setExpandedWidth(Math.min(860, Math.max(EXPANDED_WIDTH, Math.ceil(measure.offsetWidth + 48))));
     };
     update();
     void document.fonts.ready.then(update);
@@ -550,6 +538,19 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
           ? EXPANDED_WIDTH
           : HUD_WIDTH
     : view === "media" ? 440 : null;
+
+  useEffect(() => {
+    const notch = notchRef.current;
+    if (!notch || !window.notchApi) return;
+    const updateBounds = () => {
+      const { x, y, width, height } = notch.getBoundingClientRect();
+      window.notchApi?.setNotchBounds({ x, y, width, height });
+    };
+    const observer = new ResizeObserver(updateBounds);
+    observer.observe(notch);
+    updateBounds();
+    return () => observer.disconnect();
+  }, []);
 
   const showArt = lyrics.state === "missing" || lyrics.state === "instrumental" || lyrics.state === "idle";
   const lyricsText =
@@ -620,7 +621,7 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
         <div className="notch-main">
           {deviceNote && (
             <span className="notch-device-note" role="status" title={deviceNote.previous ? `이전: ${deviceNote.previous}` : undefined}>
-              <span className="notch-device-note-text">OUT · {deviceNote.name}</span>
+              <span className="notch-device-note-text"><Settings2 size={16} strokeWidth={1.75} aria-hidden="true" /> {deviceNote.name}</span>
               <button
                 type="button"
                 className="notch-device-note-btn"
@@ -629,7 +630,7 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
                   void window.notchApi?.openSoundSettings();
                 }}
               >
-                SETTINGS
+                설정
               </button>
             </span>
           )}
