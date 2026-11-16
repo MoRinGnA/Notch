@@ -97,7 +97,7 @@
 .notch.is-expanded { height: 320px; border-radius: 0 0 28px 28px; }
 .notch.has-hud.is-expanded { height: 272px; }
 .notch.is-expanded .notch-panel { inset: 12px; font-family: "Pretendard Variable", Pretendard, "Segoe UI Variable Text", "Segoe UI", "Malgun Gothic", system-ui, sans-serif; color: var(--notch-text); }
-.notch-main { gap: 8px; }
+.notch-main { gap: 8px; min-height: 0; }
 .notch-source { border: 1px solid var(--notch-line); border-radius: 6px; background: var(--notch-tile-high); color: var(--notch-text-dim); font-family: inherit; font-size: 12px; letter-spacing: normal; }
 .notch-source.is-on { background: var(--notch-text); border-color: var(--notch-text); color: var(--notch-bg); }
 .notch-art-still-img { filter: none; }
@@ -127,4 +127,18 @@
 .notch .notch-vol-track:focus-visible::after { border-color: var(--notch-text); border-style: solid; }
 .notch .notch-vol-mute:hover:not(:disabled), .notch .notch-vol:hover .notch-vol-label { color: var(--notch-text); }
 .notch .notch-btn:active:not(:disabled) { background: var(--notch-line); color: var(--notch-text); }
+.notch .notch-mix-row.is-master .notch-mix-name { color: var(--notch-text); letter-spacing: normal; }
+.notch .notch-mix-divider { background: var(--notch-line); }
+.notch .notch-mix-foot, .notch .notch-voice-foot, .notch .notch-link-foot { border-color: var(--notch-line); }
+.notch .notch-source:hover:not(:disabled) { border-color: var(--notch-text-dim); color: var(--notch-text); }
+.notch .notch-source.is-on:hover:not(:disabled) { color: var(--notch-bg); }
+.notch .notch-link-input:focus { border-color: var(--notch-text); }
+.notch .notch-link-status.is-ok { color: var(--notch-ok); }
+.notch .notch-device-note-btn { border-color: var(--notch-line); }
+.notch .notch-tool-label:hover { color: var(--notch-text-dim); }
+.notch-player .notch-seg-head { opacity: 0; margin-left: -4px; }
+.notch-player .notch-progress:hover .notch-seg-head { opacity: 1; }
+.notch .notch-vol-ghost { display: none; }
+.notch.is-collapsed:has(.notch-voice-now) .notch-status { opacity: 1; }
+.notch.is-collapsed.has-voice.has-status .notch-voice-now { right: 92px; }
 @supports (corner-shape: squircle) { .notch, .notch-tile, .notch-mix, .notch-voice, .notch-link { corner-shape: squircle; } }

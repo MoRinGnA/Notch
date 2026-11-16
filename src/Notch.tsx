@@ -446,15 +446,13 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
 
   // 배터리는 평소에 숨기고, 충전 중이거나 30% 이하일 때만 글자로 알린다.
   const lowBattery = !!battery?.hasBattery && !battery.charging && battery.percent <= 30;
-  const collapsedBadge = battery?.hasBattery
-    ? battery.charging
-      ? "bolt"
-      : lowBattery
-        ? "LOW"
-        : ""
-    : deviceNote
-      ? "OUT"
-      : "";
+  const collapsedBadge = battery?.hasBattery && battery.charging
+    ? "bolt"
+    : lowBattery
+      ? "LOW"
+      : deviceNote
+        ? "OUT"
+        : "";
   // 미디어 패널에서는 중복되는 NOTCH 문구를 숨기고 전원 상태만 표시한다.
   // 음성 채널에 있을 때는 오른쪽 자리를 마이크 표시에 내준다.
   const voiceActive = !!voice?.inChannel;
@@ -520,7 +518,7 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
     const update = () => {
       if (cancelled) return;
       // 미디어 패널과 좌우 여백을 포함한 폭. 가사가 길면 여기서 늘어난다.
-      setExpandedWidth(Math.min(860, Math.max(EXPANDED_WIDTH, Math.ceil(measure.offsetWidth + 48))));
+      setExpandedWidth(Math.min(860, Math.max(EXPANDED_WIDTH, Math.ceil(measure.offsetWidth + 56))));
     };
     update();
     void document.fonts.ready.then(update);
