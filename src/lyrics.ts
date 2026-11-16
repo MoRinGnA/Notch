@@ -1,0 +1,169 @@
+import { trackName, artistName, titleArtist } from "./mediaText";
+
+export interface Lyrics {
+  state: "idle" | "loading" | "ready" | "missing" | "instrumental";
+  text: string;
+  // 싱크 가사: 줄별 시작 시각(초)과 텍스트. 없으면 빈 배열.
+  synced: { time: number; text: string }[];
+}
+
+const LYRICS_GAP_MS = 300;
+const LYRICS_CACHE_LIMIT = 50;
+
+// 검색 결과 후보의 점수. 곡명이 같아야 하고, 아티스트까지 맞으면 가장 높게 친다.
+// 원본 TopDock LyricsService.ScoreMatch와 같은 규칙: 아티스트가 맞으면 가장 강하고,
+// 아티스트를 못 믿으면(유튜브 업로더) 제목이 완전히 같고 재생 길이까지 맞아야 한다.
+function matchScore(
+  hit: { trackName?: string; artistName?: string; duration?: number },
+  track: string,
+  artist: string,
+  mediaDuration: number,
+): number {
+  const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+  const want = norm(track);
+  const got = norm(hit.trackName ?? "");
+  if (!want || !got) return 0;
+  const titleScore = want === got ? 1 : got.includes(want) || want.includes(got) ? 0.6 : 0;
+  if (titleScore === 0) return 0;
+  if (artist) {
+    const a = norm(artist);
+    const ga = norm(hit.artistName ?? "");
+    if (a && ga && (a === ga || ga.includes(a) || a.includes(ga))) return titleScore * 0.6 + 0.4;
+    // 아티스트가 다르면 제목이 완전히 같고 재생 길이까지 맞을 때만 받아들인다.
+    if (want !== got) return 0;
+    if (mediaDuration > 0 && hit.duration && hit.duration > 0) {
+      const diff = Math.abs(hit.duration - mediaDuration);
+      if (diff > 40) return 0;
+      return diff <= 5 ? 0.85 : 0.72;
+    }
+    return 0;
+  }
+  // 아티스트를 모를 때는 제목과 재생 길이로만 판단한다.
+  if (mediaDuration > 0 && hit.duration && hit.duration > 0) {
+    const diff = Math.abs(hit.duration - mediaDuration);
+    if (diff > 40) return 0;
+    if (want === got) return diff <= 5 ? 0.85 : 0.72;
+    // "밤편지"처럼 제목이 다른 언어와 섞여 있어도 길이가 거의 같으면 받아들인다.
+    return diff <= 5 ? 0.7 : 0;
+  }
+  return want === got ? 0.65 : 0;
+}
+
+function stripTimestamps(synced: string): string {
+  return synced.replace(/^\[[^\]]*\]\s?/gm, "").trim();
+}
+
+// LRC 형식([mm:ss.xx] 텍스트)을 줄별 시각 목록으로 바꾼다.
+function parseSynced(synced: string): { time: number; text: string }[] {
+  const rows: { time: number; text: string }[] = [];
+  for (const line of synced.split("\n")) {
+    const m = line.match(/^\[(\d+):(\d+(?:\.\d+)?)\]\s?(.*)$/);
+    if (!m) continue;
+    rows.push({ time: Number(m[1]) * 60 + Number(m[2]), text: m[3].trim() });
+  }
+  return rows;
+}
+
+type LrcHit = {
+  plainLyrics?: string | null;
+  syncedLyrics?: string | null;
+  instrumental?: boolean;
+  trackName?: string;
+  artistName?: string;
+  duration?: number;
+};
+
+// 같은 곡이 원문(한글)과 로마자 표기로 따로 올라와 있으면 원문을 고른다.
+const HANGUL = /[\u3131-\u318e\uac00-\ud7a3]/;
+function lyricScript(hit: LrcHit): number {
+  return HANGUL.test(hit.syncedLyrics || hit.plainLyrics || "") ? 1 : 0;
+}
+
+type Candidate = { score: number; hit: LrcHit; order: number };
+
+// 점수가 같으면 한글 가사 > 줄별 시각이 있는 가사 > 재생 길이에 가까운 가사 순으로 고른다.
+function betterHit(next: Candidate, current: Candidate, mediaDuration: number): boolean {
+  if (next.score !== current.score) return next.score > current.score;
+  const script = lyricScript(next.hit) - lyricScript(current.hit);
+  if (script !== 0) return script > 0;
+  const synced = Number(!!next.hit.syncedLyrics) - Number(!!current.hit.syncedLyrics);
+  if (synced !== 0) return synced > 0;
+  const gap = (hit: LrcHit) =>
+    mediaDuration > 0 && hit.duration ? Math.abs(hit.duration - mediaDuration) : Number.POSITIVE_INFINITY;
+  const nextGap = gap(next.hit);
+  const currentGap = gap(current.hit);
+  if (nextGap !== currentGap) return nextGap < currentGap;
+  return next.order < current.order;
+}
+
+const lyricsCache = new Map<string, Lyrics>();
+let lastLyricsAt = 0;
+
+export async function fetchLyrics(media: NotchMedia): Promise<Lyrics> {
+  const track = trackName(media.title);
+  // 채널명이 레이블이라 아티스트를 못 얻으면 제목 앞부분에서 가져온다.
+  const artist = artistName(media.artist) || titleArtist(media.title);
+  const key = `${track}|${artist}|${media.album}`;
+  const cached = lyricsCache.get(key);
+  if (cached) return cached;
+
+  // LRCLIB에 연속으로 묻지 않도록 간격을 둔다.
+  const throttle = async () => {
+    const wait = lastLyricsAt + LYRICS_GAP_MS - Date.now();
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    lastLyricsAt = Date.now();
+  };
+  await throttle();
+
+  const headers = { "Lrclib-Client": "Notch/0.1" };
+  const toResult = (data: LrcHit): Lyrics => {
+    if (data.instrumental) return { state: "instrumental", text: "", synced: [] };
+    const text = data.plainLyrics?.trim() || (data.syncedLyrics ? stripTimestamps(data.syncedLyrics) : "");
+    const synced = data.syncedLyrics ? parseSynced(data.syncedLyrics) : [];
+    return text ? { state: "ready", text, synced } : { state: "missing", text: "", synced: [] };
+  };
+
+  // 후보 비교는 콜백에서 갱신하므로 객체에 담아 둔다.
+  const selection: { best: Candidate | null; exact: LrcHit | null } = { best: null, exact: null };
+  const consider = (hit: LrcHit, order: number) => {
+    if (hit.instrumental) return;
+    if (!hit.plainLyrics?.trim() && !hit.syncedLyrics) return;
+    const score = matchScore(hit, track, artist, media.duration);
+    if (score < 0.6) return;
+    const candidate: Candidate = { score, hit, order };
+    const current = selection.best;
+    if (!current || betterHit(candidate, current, media.duration)) selection.best = candidate;
+  };
+
+  let result: Lyrics = { state: "missing", text: "", synced: [] };
+  try {
+    // 1차: 정확한 제목·아티스트 조회
+    const params = new URLSearchParams({ track_name: track, artist_name: artist });
+    if (media.album) params.set("album_name", media.album);
+    const res = await fetch(`https://lrclib.net/api/get?${params.toString()}`, { headers });
+    if (res.ok) {
+      const data = (await res.json()) as LrcHit;
+      selection.exact = data;
+      consider(data, 0);
+    }
+    // 2차: 같은 곡의 다른 판본까지 훑어 한글 원문이 있으면 그쪽을 쓴다.
+    const queries = [...new Set([`${artist} ${track}`.trim(), track].filter((q) => q.length >= 2))];
+    for (const [index, q] of queries.entries()) {
+      // 이미 한글 가사가 잡혔으면 더 찾지 않는다.
+      if (selection.best && lyricScript(selection.best.hit)) break;
+      await throttle();
+      const res2 = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(q)}`, { headers });
+      if (!res2.ok) continue;
+      const list = (await res2.json()) as LrcHit[];
+      for (const hit of list) consider(hit, index + 1);
+    }
+    const picked = selection.best?.hit ?? selection.exact;
+    if (picked) result = toResult(picked);
+  } catch {
+    result = { state: "missing", text: "", synced: [] };
+  }
+
+  if (lyricsCache.size >= LYRICS_CACHE_LIMIT) lyricsCache.clear();
+  lyricsCache.set(key, result);
+  return result;
+}
