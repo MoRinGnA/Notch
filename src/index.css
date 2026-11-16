@@ -1,40 +1,8 @@
 :root {
   --notch-accent: #e8833a;
-  /* 글자·선·채움은 잉크 한 색으로, 바탕은 별도 변수로 둔다.
-     rgba() 안에는 채널 값만 들어가므로 테마가 이 두 값을 바꿔 끼우면 전체 색이 함께 뒤집힌다. */
-  --ink: 255, 255, 255;
-  --ink-solid: #ffffff;
-  --notch-bg: #000000;
-  /* 베젤(노치를 둘러싼 검은 테두리)과 그 두께. 다크에서는 두께가 0이라 보이지 않고,
-     라이트에서만 화면이 베젤 안쪽으로 들어앉는다. */
-  --notch-shell: #000000;
-  --notch-rim: 0px;
-  /* 바탕색의 채널 값. 역상된 글자 위에 깔 때 쓴다. */
-  --paper: 0, 0, 0;
-  /* 경고 문구. 라이트 바탕에서는 연한 분홍이 읽히지 않아 더 진한 쪽을 쓴다. */
-  --danger: #ff9a8a;
   color-scheme: dark;
   font-family: "Orbit", "Segoe UI", system-ui, sans-serif;
   background: transparent;
-}
-
-/* 라이트 테마: 같은 구조에 종이색 바탕과 먹색 잉크를 쓴다.
-   역상 강조(흑백 반전)는 그대로 두므로, 잉크가 어두워지면 반전된 글자는 바탕색을 쓴다. */
-:root[data-theme="light"] .notch {
-  --media-accent: var(--media-accent-light, var(--notch-accent));
-}
-
-:root[data-theme="light"] {
-  --ink: 26, 26, 30;
-  --ink-solid: #1a1a1e;
-  --notch-bg: #f1efea;
-  --paper: 241, 239, 234;
-  /* 검은 베젤에 바로 붙으면 종이가 붙은 것처럼 떠 보여, 가장자리를 베젤 안쪽으로 들인다. */
-  --notch-rim: 3px;
-  --danger: #b23a26;
-  /* 종이 바탕에서는 주황이 흐려 보여 조금 진한 쪽을 쓴다. */
-  --notch-accent: #c2611f;
-  color-scheme: light;
 }
 
 html,
@@ -62,8 +30,6 @@ body,
 }
 
 .notch {
-  /* 곡 표지에서 뽑은 색은 테마별로 따로 받아, 바탕에 맞는 쪽을 쓴다. */
-  --media-accent: var(--media-accent-dark, var(--notch-accent));
   position: relative;
   padding: 0;
   border: none;
@@ -87,14 +53,12 @@ body,
   transition-delay: 0s;
 }
 
-/* 본체: 아래 모서리만 둥글고, 위 모서리는 바깥으로 휘어 상단에 이어짐 */
+/* 검정 본체: 아래 모서리만 둥글고, 위 모서리는 바깥으로 휘어 상단에 이어짐 */
 .notch-body {
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background: var(--notch-bg);
-  /* 안쪽 테두리는 배경 위·내용 아래에 그려지므로 배치를 건드리지 않고 베젤만 만든다. */
-  box-shadow: inset 0 0 0 var(--notch-rim) var(--notch-shell);
+  background: #000;
 }
 
 /* 위쪽 바깥 모서리 (오목한 필렛) */
@@ -107,15 +71,14 @@ body,
   height: 8px;
 }
 
-/* 필렛은 베젤 색을 써야 위 가장자리와 한 덩어리로 이어진다. */
 .notch-body::before {
   right: 100%;
-  background: radial-gradient(circle at 0 100%, transparent 7.5px, var(--notch-shell) 8px);
+  background: radial-gradient(circle at 0 100%, transparent 7.5px, #000 8px);
 }
 
 .notch-body::after {
   left: 100%;
-  background: radial-gradient(circle at 100% 100%, transparent 7.5px, var(--notch-shell) 8px);
+  background: radial-gradient(circle at 100% 100%, transparent 7.5px, #000 8px);
 }
 
 /* 생동감 있는 눈 */
@@ -141,7 +104,7 @@ body,
 .notch-eye {
   width: 10px;
   height: 8px;
-  background: var(--ink-solid);
+  background: #ffffff;
   /* 둥근 점 대신 비스듬히 깎아낸 각진 눈 */
   clip-path: polygon(22% 0, 100% 0, 78% 100%, 0 100%);
   transform-origin: center;
@@ -181,8 +144,8 @@ body,
   pointer-events: none;
   z-index: 1;
   background-image:
-    linear-gradient(rgba(var(--ink), 0.05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(var(--ink), 0.05) 1px, transparent 1px);
+    linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
   background-size: 18px 18px;
 }
 
@@ -216,7 +179,7 @@ body,
   max-width: min(388px, 100%);
   min-width: 0;
   pointer-events: none;
-  color: var(--ink-solid);
+  color: #ffffff;
   font-size: 11px;
   line-height: 1.25;
   white-space: nowrap;
@@ -247,7 +210,7 @@ body,
   flex: none;
   width: 1px;
   height: 18px;
-  background: rgba(var(--ink), 0.16);
+  background: rgba(255, 255, 255, 0.16);
 }
 
 /* 오른쪽: 현재 가사 한 줄 */
@@ -256,7 +219,7 @@ body,
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
-  color: rgba(var(--ink), 0.78);
+  color: rgba(255, 255, 255, 0.78);
   font-size: 12px;
   letter-spacing: normal;
 }
@@ -334,7 +297,7 @@ body,
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: rgba(var(--ink), 0.42);
+  color: rgba(255, 255, 255, 0.42);
   font-size: 8px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -371,14 +334,14 @@ body,
   opacity: 0;
   transition: opacity 0.08s ease;
   background-image:
-    linear-gradient(rgba(var(--ink), 0.35), rgba(var(--ink), 0.35)),
-    linear-gradient(rgba(var(--ink), 0.35), rgba(var(--ink), 0.35)),
-    linear-gradient(rgba(var(--ink), 0.35), rgba(var(--ink), 0.35)),
-    linear-gradient(rgba(var(--ink), 0.35), rgba(var(--ink), 0.35)),
-    linear-gradient(rgba(var(--ink), 0.35), rgba(var(--ink), 0.35)),
-    linear-gradient(rgba(var(--ink), 0.35), rgba(var(--ink), 0.35)),
-    linear-gradient(rgba(var(--ink), 0.35), rgba(var(--ink), 0.35)),
-    linear-gradient(rgba(var(--ink), 0.35), rgba(var(--ink), 0.35));
+    linear-gradient(rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.35)),
+    linear-gradient(rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.35)),
+    linear-gradient(rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.35)),
+    linear-gradient(rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.35)),
+    linear-gradient(rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.35)),
+    linear-gradient(rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.35)),
+    linear-gradient(rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.35)),
+    linear-gradient(rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.35));
   background-repeat: no-repeat;
   background-size:
     10px 1px, 1px 10px, 10px 1px, 1px 10px,
@@ -404,7 +367,7 @@ body,
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.08s ease;
-  color: rgba(var(--ink), 0.72);
+  color: rgba(255, 255, 255, 0.72);
   font-family: "Consolas", "Courier New", monospace;
   font-size: 10px;
   letter-spacing: 0.08em;
@@ -431,7 +394,7 @@ body,
   font-family: "Consolas", "Courier New", monospace;
   font-size: 9px;
   letter-spacing: 0.08em;
-  color: var(--ink-solid);
+  color: #ffffff;
   opacity: 1;
   transition: opacity 0.12s ease 0.2s;
 }
@@ -551,16 +514,16 @@ body,
 }
 
 .notch-mic.is-muted .notch-mic-body {
-  fill: rgba(var(--ink), 0.42);
+  fill: rgba(255, 255, 255, 0.42);
 }
 
 .notch-mic.is-muted .notch-mic-arc {
-  stroke: rgba(var(--ink), 0.42);
+  stroke: rgba(255, 255, 255, 0.42);
 }
 
 .notch-mic-slash {
   fill: none;
-  stroke: var(--ink-solid);
+  stroke: #ffffff;
   stroke-width: 2.1;
   stroke-linecap: round;
 }
@@ -600,7 +563,7 @@ body,
   width: 9px;
   height: 14px;
   margin-top: -7px;
-  background: var(--ink-solid);
+  background: #ffffff;
   clip-path: polygon(58% 0%, 8% 58%, 42% 58%, 32% 100%, 92% 40%, 54% 40%);
   pointer-events: none;
   opacity: 1;
@@ -632,7 +595,7 @@ body,
   transition:
     opacity 0.1s ease-out,
     transform 0.14s ease-out;
-  color: var(--ink-solid);
+  color: #ffffff;
 }
 
 /* 본체가 열린 뒤 패널이 짧게 따라오며 자연스럽게 자리를 잡는다. */
@@ -672,7 +635,7 @@ body,
 /* 아티스트 · 앨범을 한 줄로 묶어 라벨 세 줄을 없앤다 */
 .notch-info-meta {
   font-size: 10px;
-  color: rgba(var(--ink), 0.55);
+  color: rgba(255, 255, 255, 0.55);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -690,7 +653,7 @@ body,
 .notch-eq i {
   width: 2px;
   height: 4px;
-  background: var(--ink-solid);
+  background: #ffffff;
   animation: notch-eq 0.9s steps(3, end) infinite;
 }
 
@@ -711,7 +674,7 @@ body,
   flex: none;
   width: 7px;
   height: 7px;
-  background: var(--ink-solid);
+  background: #ffffff;
   opacity: 0.85;
 }
 
@@ -738,7 +701,7 @@ body,
   font-family: "Consolas", "Courier New", monospace;
   font-size: 9px;
   letter-spacing: 0.05em;
-  color: rgba(var(--ink), 0.55);
+  color: rgba(255, 255, 255, 0.55);
 }
 
 .notch-info-row {
@@ -754,14 +717,14 @@ body,
   flex: 1;
   height: 2px;
   margin: 0;
-  background: rgba(var(--ink), 0.14);
+  background: rgba(255, 255, 255, 0.14);
   overflow: visible;
 }
 
 .notch-seg-fill {
   position: absolute;
   inset: 0;
-  background: rgba(var(--ink), 0.85);
+  background: rgba(255, 255, 255, 0.85);
   transform-origin: left center;
 }
 
@@ -772,7 +735,7 @@ body,
   width: 3px;
   height: 8px;
   margin-left: -1px;
-  background: var(--ink-solid);
+  background: #ffffff;
   pointer-events: none;
 }
 
@@ -782,15 +745,15 @@ body,
   overflow-y: auto;
   background: repeating-linear-gradient(
     0deg,
-    rgba(var(--ink), 0.05) 0px,
-    rgba(var(--ink), 0.05) 1px,
+    rgba(255, 255, 255, 0.05) 0px,
+    rgba(255, 255, 255, 0.05) 1px,
     transparent 1px,
     transparent 3px
   );
   font-size: 12px;
   line-height: 1.6;
   white-space: pre-line;
-  color: rgba(var(--ink), 0.85);
+  color: rgba(255, 255, 255, 0.85);
   scrollbar-width: none;
 }
 
@@ -817,7 +780,7 @@ body,
   display: inline-block;
   font-size: 14px;
   font-weight: 700;
-  color: rgba(var(--ink), 0.72);
+  color: #b8b8b8;
   line-height: 1.3;
   padding: 1px 0;
   word-break: keep-all;
@@ -864,7 +827,7 @@ body,
 
 .notch-art-note {
   font-size: 11px;
-  color: rgba(var(--ink), 0.6);
+  color: rgba(255, 255, 255, 0.6);
 }
 
 /* 가사가 없을 때: 유튜브 썸네일을 꽉 찬 정지 화면처럼 깔아 빈 공간을 민다 */
@@ -873,7 +836,7 @@ body,
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  border: 1px solid rgba(var(--ink), 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
 .notch-art-still-img {
@@ -927,14 +890,14 @@ body,
   font-family: "Consolas", "Courier New", monospace;
   font-size: 14px;
   line-height: 1.2;
-  color: rgba(var(--ink), 0.7);
+  color: rgba(255, 255, 255, 0.7);
 }
 
 /* 도트 날씨 아이콘: 컬러 이모지 대신 흑백 픽셀 */
 .notch-hud-pixel {
   width: 20px;
   height: 20px;
-  fill: var(--ink-solid);
+  fill: #ffffff;
   opacity: 0.85;
   shape-rendering: crispEdges;
 }
@@ -943,7 +906,7 @@ body,
   font-family: "Consolas", "Courier New", monospace;
   font-size: 20px;
   line-height: 1;
-  color: rgba(var(--ink), 0.85);
+  color: rgba(255, 255, 255, 0.85);
   font-variant-numeric: tabular-nums;
 }
 
@@ -954,14 +917,14 @@ body,
   font-size: 42px;
   line-height: 1;
   letter-spacing: 0.02em;
-  color: var(--ink-solid);
+  color: #ffffff;
   font-variant-numeric: tabular-nums;
 }
 
 /* 초는 콜론과 함께 한 발 뒤로 (콜론 간격은 시계 내부와 동일하게) */
 .notch-hud-sec {
   margin-left: 0;
-  color: rgba(var(--ink), 0.35);
+  color: rgba(255, 255, 255, 0.35);
 }
 
 .notch-hud-date {
@@ -969,7 +932,7 @@ body,
   font-family: "Consolas", "Courier New", monospace;
   font-size: 11px;
   letter-spacing: 0.1em;
-  color: rgba(var(--ink), 0.85);
+  color: rgba(255, 255, 255, 0.85);
 }
 
 /* 하단 시스템 정보 스트립 */
@@ -980,11 +943,11 @@ body,
   gap: 16px;
   margin-top: 5px;
   padding-top: 7px;
-  border-top: 1px solid rgba(var(--ink), 0.12);
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
   font-family: "Consolas", "Courier New", monospace;
   font-size: 9px;
   letter-spacing: 0.08em;
-  color: rgba(var(--ink), 0.5);
+  color: rgba(255, 255, 255, 0.5);
   white-space: pre;
   font-variant-numeric: tabular-nums;
 }
@@ -1002,8 +965,8 @@ body,
 
 /* 85°C 이상: 색 대신 흑백 반전으로 경고 */
 .notch-hud-thermal.is-hot {
-  background: var(--ink-solid);
-  color: var(--notch-bg);
+  background: #ffffff;
+  color: #000000;
   padding: 1px 4px;
 }
 
@@ -1019,7 +982,7 @@ body,
 
 /* 음소거 중에는 포인트 컬러를 빼서 신호가 끊긴 것이 보이게 한다. */
 .notch-vol.is-muted {
-  --vol-accent: rgba(var(--ink), 0.38);
+  --vol-accent: rgba(255, 255, 255, 0.38);
 }
 
 /* 라벨은 표시용이자 앱별 볼륨으로 들어가는 버튼이다. */
@@ -1032,14 +995,14 @@ body,
   font-size: 8px;
   line-height: 1;
   letter-spacing: 0.18em;
-  color: rgba(var(--ink), 0.55);
+  color: rgba(255, 255, 255, 0.55);
   cursor: pointer;
   transition: color 0.12s ease;
 }
 
 .notch-vol:hover .notch-vol-label,
 .notch-vol.is-live .notch-vol-label {
-  color: var(--ink-solid);
+  color: #ffffff;
 }
 
 /* 값이 들어오지 않으면 계기판은 꺼진 채로 남는다. */
@@ -1069,7 +1032,7 @@ body,
 
 .notch-vol-rail {
   right: 0;
-  background: rgba(var(--ink), 0.24);
+  background: rgba(255, 255, 255, 0.24);
 }
 
 /* 보간 없이 즉시 튀어 오르게 둔다(기계식 계기판). */
@@ -1092,12 +1055,12 @@ body,
   width: 1px;
   height: 2px;
   margin-left: -0.5px;
-  background: rgba(var(--ink), 0.24);
+  background: rgba(255, 255, 255, 0.24);
 }
 
 .notch-vol-tick.is-major {
   height: 4px;
-  background: rgba(var(--ink), 0.55);
+  background: rgba(255, 255, 255, 0.55);
 }
 
 /* 현재 값의 위치를 가리키는 바늘: 끝에 넓은 머리를 붙여 한눌에 보이게 한다 */
@@ -1140,7 +1103,7 @@ body,
   content: "";
   position: absolute;
   inset: -2px;
-  border: 1px dashed rgba(var(--ink), 0.4);
+  border: 1px dashed rgba(255, 255, 255, 0.4);
 }
 
 .notch-vol-value {
@@ -1152,16 +1115,16 @@ body,
   line-height: 1;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.08em;
-  color: var(--ink-solid);
+  color: #ffffff;
 }
 
 .notch-vol-value.is-target {
-  color: rgba(var(--ink), 0.45);
+  color: rgba(255, 255, 255, 0.45);
 }
 
 /* 음소거 중에도 값은 남기되 죽은 눈금처럼 가라앉힌다. 반전은 MUTED 플레이트 하나에만 준다. */
 .notch-vol-value.is-muted {
-  color: rgba(var(--ink), 0.35);
+  color: rgba(255, 255, 255, 0.35);
 }
 
 /* 음소거는 글자 대신 작은 M 스위치로 줄였다(브랜드). 켜지면 흑백 반전. */
@@ -1172,9 +1135,9 @@ body,
   width: 14px;
   height: 14px;
   padding: 0;
-  border: 1px solid rgba(var(--ink), 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   background: transparent;
-  color: rgba(var(--ink), 0.6);
+  color: rgba(255, 255, 255, 0.6);
   font-family: "Consolas", "Courier New", monospace;
   font-size: 8px;
   line-height: 1;
@@ -1183,14 +1146,14 @@ body,
 }
 
 .notch-vol-mute:hover:not(:disabled) {
-  border-color: var(--ink-solid);
-  color: var(--ink-solid);
+  border-color: #ffffff;
+  color: #ffffff;
 }
 
 .notch-vol-mute.is-on {
-  background: var(--ink-solid);
-  border-color: var(--ink-solid);
-  color: var(--notch-bg);
+  background: #ffffff;
+  border-color: #ffffff;
+  color: #000000;
 }
 
 .notch-vol-mute:disabled {
@@ -1215,14 +1178,14 @@ body,
   justify-content: space-between;
   gap: 12px;
   padding-bottom: 5px;
-  border-bottom: 1px solid rgba(var(--ink), 0.14);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
 }
 
 .notch-mix-title {
   font-family: "Consolas", "Courier New", monospace;
   font-size: 9px;
   letter-spacing: 0.22em;
-  color: rgba(var(--ink), 0.8);
+  color: rgba(255, 255, 255, 0.8);
 }
 
 .notch-mix-device {
@@ -1233,7 +1196,7 @@ body,
   font-family: "Consolas", "Courier New", monospace;
   font-size: 9px;
   letter-spacing: 0.06em;
-  color: rgba(var(--ink), 0.45);
+  color: rgba(255, 255, 255, 0.45);
 }
 
 .notch-mix-list {
@@ -1261,12 +1224,12 @@ body,
 
 /* 음소거된 줄은 마스터 계기판과 같이 포인트 컬러를 뺀다. */
 .notch-mix-row.is-muted {
-  --vol-accent: rgba(var(--ink), 0.38);
+  --vol-accent: rgba(255, 255, 255, 0.38);
 }
 
 /* 마스터는 구분선 위의 상위 줄이라 이름을 밝게 두고 자간을 넓힌다. */
 .notch-mix-row.is-master .notch-mix-name {
-  color: var(--ink-solid);
+  color: #ffffff;
   letter-spacing: 0.2em;
 }
 
@@ -1278,7 +1241,7 @@ body,
   flex: none;
   height: 1px;
   margin: 1px 0;
-  background: rgba(var(--ink), 0.14);
+  background: rgba(255, 255, 255, 0.14);
 }
 
 .notch-mix-name {
@@ -1289,7 +1252,7 @@ body,
   font-family: "Consolas", "Courier New", monospace;
   font-size: 10px;
   letter-spacing: 0.1em;
-  color: rgba(var(--ink), 0.85);
+  color: rgba(255, 255, 255, 0.85);
 }
 
 .notch-mix-track {
@@ -1317,7 +1280,7 @@ body,
   font-family: "Consolas", "Courier New", monospace;
   font-size: 10px;
   letter-spacing: 0.06em;
-  color: rgba(var(--ink), 0.4);
+  color: rgba(255, 255, 255, 0.4);
 }
 
 .notch-mix-foot {
@@ -1326,7 +1289,7 @@ body,
   align-items: center;
   justify-content: space-between;
   padding-top: 4px;
-  border-top: 1px solid rgba(var(--ink), 0.14);
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
 }
 
 /* 클립보드 기록: 앱별 볼륨과 같은 머리·목록·발 구조를 그대로 쓴다. */
@@ -1346,14 +1309,14 @@ body,
   justify-content: space-between;
   gap: 12px;
   padding-bottom: 5px;
-  border-bottom: 1px solid rgba(var(--ink), 0.14);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
 }
 
 .notch-link-title {
   font-family: "Consolas", "Courier New", monospace;
   font-size: 9px;
   letter-spacing: 0.22em;
-  color: rgba(var(--ink), 0.8);
+  color: rgba(255, 255, 255, 0.8);
 }
 
 .notch-link-state {
@@ -1361,7 +1324,7 @@ body,
   font-family: "Consolas", "Courier New", monospace;
   font-size: 9px;
   letter-spacing: 0.16em;
-  color: rgba(var(--ink), 0.45);
+  color: rgba(255, 255, 255, 0.45);
 }
 
 .notch-link-note {
@@ -1370,7 +1333,7 @@ body,
   font-size: 10px;
   line-height: 1.55;
   letter-spacing: 0.02em;
-  color: rgba(var(--ink), 0.55);
+  color: rgba(255, 255, 255, 0.55);
 }
 
 .notch-link-form {
@@ -1385,9 +1348,9 @@ body,
   flex: 1;
   min-width: 0;
   padding: 5px 8px;
-  border: 1px solid rgba(var(--ink), 0.16);
-  background: rgba(var(--ink), 0.04);
-  color: var(--ink-solid);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.04);
+  color: #ffffff;
   font-family: "Consolas", "Courier New", monospace;
   font-size: 10px;
   letter-spacing: 0.12em;
@@ -1395,7 +1358,7 @@ body,
 }
 
 .notch-link-input::placeholder {
-  color: rgba(var(--ink), 0.3);
+  color: rgba(255, 255, 255, 0.3);
 }
 
 .notch-link-input:focus {
@@ -1409,7 +1372,7 @@ body,
   font-size: 10px;
   line-height: 1.5;
   letter-spacing: 0.02em;
-  color: rgba(var(--ink), 0.5);
+  color: rgba(255, 255, 255, 0.5);
 }
 
 .notch-link-status.is-ok {
@@ -1417,7 +1380,7 @@ body,
 }
 
 .notch-link-status.is-error {
-  color: var(--danger);
+  color: #ff9a8a;
 }
 
 .notch-link-foot {
@@ -1426,7 +1389,7 @@ body,
   align-items: center;
   justify-content: flex-end;
   padding-top: 4px;
-  border-top: 1px solid rgba(var(--ink), 0.14);
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
 }
 
 /* 디스코드 전용 화면(펼쳤을 때만). */
@@ -1445,7 +1408,7 @@ body,
   justify-content: space-between;
   gap: 12px;
   padding-bottom: 5px;
-  border-bottom: 1px solid rgba(var(--ink), 0.14);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
 }
 
 .notch-voice-title {
@@ -1456,7 +1419,7 @@ body,
   font-family: "Consolas", "Courier New", monospace;
   font-size: 9px;
   letter-spacing: 0.18em;
-  color: rgba(var(--ink), 0.8);
+  color: rgba(255, 255, 255, 0.8);
 }
 
 .notch-voice-count {
@@ -1464,7 +1427,7 @@ body,
   font-family: "Consolas", "Courier New", monospace;
   font-size: 9px;
   letter-spacing: 0.16em;
-  color: rgba(var(--ink), 0.45);
+  color: rgba(255, 255, 255, 0.45);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1491,13 +1454,13 @@ body,
   font-family: "Consolas", "Courier New", monospace;
   font-size: 10px;
   letter-spacing: 0.04em;
-  color: rgba(var(--ink), 0.6);
+  color: rgba(255, 255, 255, 0.6);
   transition: color 0.12s ease;
 }
 
 /* 지금 말하는 사람만 밝아진다. */
 .notch-voice-row.is-speaking {
-  color: var(--ink-solid);
+  color: #ffffff;
 }
 
 .notch-voice-name {
@@ -1511,14 +1474,14 @@ body,
   flex: none;
   font-size: 8px;
   letter-spacing: 0.14em;
-  color: rgba(var(--ink), 0.38);
+  color: rgba(255, 255, 255, 0.38);
 }
 
 .notch-voice-empty {
   font-family: "Consolas", "Courier New", monospace;
   font-size: 10px;
   letter-spacing: 0.06em;
-  color: rgba(var(--ink), 0.4);
+  color: rgba(255, 255, 255, 0.4);
 }
 
 .notch-voice-foot {
@@ -1528,7 +1491,7 @@ body,
   justify-content: space-between;
   gap: 10px;
   padding-top: 4px;
-  border-top: 1px solid rgba(var(--ink), 0.14);
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
 }
 
 /* 접힌 노치: 다른 사람이 말할 때만 마이크 아이콘 왼쪽 빈자리에 이니셜이 뜬다. */
@@ -1563,14 +1526,14 @@ body,
   justify-content: space-between;
   gap: 12px;
   padding-bottom: 5px;
-  border-bottom: 1px solid rgba(var(--ink), 0.14);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
 }
 
 .notch-clip-title {
   font-family: "Consolas", "Courier New", monospace;
   font-size: 9px;
   letter-spacing: 0.22em;
-  color: rgba(var(--ink), 0.8);
+  color: rgba(255, 255, 255, 0.8);
 }
 
 .notch-clip-count {
@@ -1578,7 +1541,7 @@ body,
   font-family: "Consolas", "Courier New", monospace;
   font-size: 9px;
   letter-spacing: 0.16em;
-  color: rgba(var(--ink), 0.45);
+  color: rgba(255, 255, 255, 0.45);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1605,7 +1568,7 @@ body,
   padding: 3px 5px;
   border: 1px solid transparent;
   background: transparent;
-  color: rgba(var(--ink), 0.82);
+  color: rgba(255, 255, 255, 0.82);
   font-family: "Consolas", "Courier New", monospace;
   font-size: 10px;
   letter-spacing: 0.04em;
@@ -1615,15 +1578,15 @@ body,
 }
 
 .notch-clip-row:hover {
-  border-color: rgba(var(--ink), 0.24);
-  color: var(--ink-solid);
+  border-color: rgba(255, 255, 255, 0.24);
+  color: #ffffff;
 }
 
 .notch-clip-index {
   flex: none;
   font-size: 9px;
   letter-spacing: 0.1em;
-  color: rgba(var(--ink), 0.32);
+  color: rgba(255, 255, 255, 0.32);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1638,30 +1601,30 @@ body,
   flex: none;
   font-size: 8px;
   letter-spacing: 0.14em;
-  color: rgba(var(--ink), 0.38);
+  color: rgba(255, 255, 255, 0.38);
 }
 
 .notch-clip-row:hover .notch-clip-act {
-  color: var(--ink-solid);
+  color: #ffffff;
 }
 
 /* 방금 복사한 줄은 흑백 반전으로만 알린다. */
 .notch-clip-row.is-done {
-  background: var(--ink-solid);
-  border-color: var(--ink-solid);
-  color: var(--notch-bg);
+  background: #ffffff;
+  border-color: #ffffff;
+  color: #000000;
 }
 
 .notch-clip-row.is-done .notch-clip-index,
 .notch-clip-row.is-done .notch-clip-act {
-  color: rgba(var(--paper), 0.6);
+  color: rgba(0, 0, 0, 0.6);
 }
 
 .notch-clip-empty {
   font-family: "Consolas", "Courier New", monospace;
   font-size: 10px;
   letter-spacing: 0.06em;
-  color: rgba(var(--ink), 0.4);
+  color: rgba(255, 255, 255, 0.4);
 }
 
 .notch-clip-foot {
@@ -1670,7 +1633,7 @@ body,
   align-items: center;
   justify-content: space-between;
   padding-top: 4px;
-  border-top: 1px solid rgba(var(--ink), 0.14);
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
 }
 
 /* 펼친 화면 어디서든 클립보드 기록으로 들어가는 라벨(VOL 라벨과 같은 모양). */
@@ -1683,13 +1646,13 @@ body,
   font-size: 8px;
   line-height: 1;
   letter-spacing: 0.18em;
-  color: rgba(var(--ink), 0.55);
+  color: rgba(255, 255, 255, 0.55);
   cursor: pointer;
   transition: color 0.12s ease;
 }
 
 .notch-clip-open:hover {
-  color: var(--ink-solid);
+  color: #ffffff;
 }
 
 /* 미디어 화면의 버튼 줄은 3칸 그리드다. CLIP은 빈 왼쪽 칸에 앉힌다. */
@@ -1707,7 +1670,7 @@ body,
   gap: 10px;
   margin-bottom: 6px;
   padding-bottom: 5px;
-  border-bottom: 1px solid rgba(var(--ink), 0.16);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.16);
 }
 
 .notch-device-note-text {
@@ -1718,15 +1681,15 @@ body,
   font-family: "Consolas", "Courier New", monospace;
   font-size: 9px;
   letter-spacing: 0.14em;
-  color: rgba(var(--ink), 0.8);
+  color: rgba(255, 255, 255, 0.8);
 }
 
 .notch-device-note-btn {
   flex: none;
   padding: 1px 4px;
-  border: 1px solid rgba(var(--ink), 0.24);
+  border: 1px solid rgba(255, 255, 255, 0.24);
   background: transparent;
-  color: rgba(var(--ink), 0.7);
+  color: rgba(255, 255, 255, 0.7);
   font-family: "Consolas", "Courier New", monospace;
   font-size: 8px;
   line-height: 1;
@@ -1737,9 +1700,9 @@ body,
 
 /* 호버는 색 대신 흑백 반전으로 강조한다 */
 .notch-device-note-btn:hover {
-  background: var(--ink-solid);
-  border-color: var(--ink-solid);
-  color: var(--notch-bg);
+  background: #ffffff;
+  border-color: #ffffff;
+  color: #000000;
 }
 
 
@@ -1778,9 +1741,9 @@ body,
 .notch-source {
   flex: none;
   padding: 2px 6px;
-  border: 1px solid rgba(var(--ink), 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   background: transparent;
-  color: rgba(var(--ink), 0.45);
+  color: rgba(255, 255, 255, 0.45);
   font-family: "Consolas", "Courier New", monospace;
   font-size: 8px;
   letter-spacing: 0.1em;
@@ -1789,14 +1752,14 @@ body,
 }
 
 .notch-source:hover:not(:disabled) {
-  border-color: rgba(var(--ink), 0.3);
-  color: var(--ink-solid);
+  border-color: rgba(255, 255, 255, 0.3);
+  color: #ffffff;
 }
 
 .notch-source.is-on {
-  border-color: var(--ink-solid);
-  background: var(--ink-solid);
-  color: var(--notch-bg);
+  border-color: #ffffff;
+  background: #ffffff;
+  color: #000000;
 }
 
 .notch-source:disabled {
@@ -1855,7 +1818,7 @@ body,
   padding: 4px 10px;
   border: none;
   background: transparent;
-  color: var(--ink-solid);
+  color: #ffffff;
   font-family: "Consolas", "Courier New", monospace;
   font-size: 10px;
   letter-spacing: 0.1em;
@@ -1865,13 +1828,13 @@ body,
 
 /* 호버/누름은 색 대신 흑백 반전으로 강조한다 */
 .notch-btn:hover:not(:disabled) {
-  background: var(--ink-solid);
-  color: var(--notch-bg);
+  background: #ffffff;
+  color: #000000;
 }
 
 .notch-btn:active:not(:disabled) {
-  background: rgba(var(--ink), 0.72);
-  color: var(--notch-bg);
+  background: #cfcfcf;
+  color: #000000;
 }
 
 .notch-btn:disabled {
@@ -1890,8 +1853,8 @@ body,
   transition: opacity 0.08s ease;
   background: repeating-linear-gradient(
     0deg,
-    rgba(var(--ink), 0.05) 0px,
-    rgba(var(--ink), 0.05) 1px,
+    rgba(255, 255, 255, 0.05) 0px,
+    rgba(255, 255, 255, 0.05) 1px,
     transparent 1px,
     transparent 3px
   );

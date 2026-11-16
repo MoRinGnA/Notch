@@ -12,19 +12,17 @@ contextBridge.exposeInMainWorld("notchApi", {
     hoverOpen: boolean;
     toggleShortcut: string;
     hideOnFullscreen: boolean;
-    theme: "dark" | "light";
   }>,
   onSettings: (
     callback: (settings: {
       hoverOpen: boolean;
       toggleShortcut: string;
       hideOnFullscreen: boolean;
-      theme: "dark" | "light";
     }) => void,
   ) => {
     const listener = (
       _event: Electron.IpcRendererEvent,
-      settings: { hoverOpen: boolean; toggleShortcut: string; hideOnFullscreen: boolean; theme: "dark" | "light" },
+      settings: { hoverOpen: boolean; toggleShortcut: string; hideOnFullscreen: boolean },
     ) => callback(settings);
     ipcRenderer.on("notch:settings", listener);
     return () => ipcRenderer.removeListener("notch:settings", listener);

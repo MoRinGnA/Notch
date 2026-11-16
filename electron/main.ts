@@ -920,24 +920,6 @@ function buildTrayMenu(): Menu {
         },
       ],
     },
-    { type: "separator" },
-    {
-      label: "테마",
-      submenu: [
-        {
-          label: "다크",
-          type: "radio" as const,
-          checked: settings.theme !== "light",
-          click: () => saveSettings({ theme: "dark" }),
-        },
-        {
-          label: "라이트",
-          type: "radio" as const,
-          checked: settings.theme === "light",
-          click: () => saveSettings({ theme: "light" }),
-        },
-      ],
-    },
     {
       label: "Discord 연결…",
       click: () => openDiscordLink(),
@@ -999,21 +981,16 @@ ipcMain.on("notch:bounds", (event, bounds: { x: number; y: number; width: number
 // 펼침/접힘 전역 단축키 (Ctrl+Alt+N).
 const TOGGLE_ACCELERATOR = "CommandOrControl+Alt+N";
 
-// 노치 색. 기본은 지금까지 쓰던 검정이다.
-type NotchTheme = "dark" | "light";
-
 interface NotchSettings {
   hoverOpen: boolean;
   toggleShortcut: string;
   hideOnFullscreen: boolean;
-  theme: NotchTheme;
 }
 
 const DEFAULT_SETTINGS: NotchSettings = {
   hoverOpen: true,
   toggleShortcut: TOGGLE_ACCELERATOR,
   hideOnFullscreen: false,
-  theme: "dark",
 };
 
 // 전체화면 숨김은 기본값에서 opt-in으로 바뀌었다. 구버전 설정 파일은
@@ -1051,7 +1028,6 @@ function readSettings(): NotchSettings {
       hideOnFullscreen: isLegacy
         ? DEFAULT_SETTINGS.hideOnFullscreen
         : typeof raw.hideOnFullscreen === "boolean" ? raw.hideOnFullscreen : DEFAULT_SETTINGS.hideOnFullscreen,
-      theme: raw.theme === "light" ? "light" : "dark",
     };
     // 옮긴 값을 한 번은 파일에 남겨, 다음 실행부터는 사용자가 고른 값과 화면 동작이 어긋나지 않게 한다.
     if (isLegacy) writeJsonFile(settingsFile(), { ...migrated, settingsVersion: SETTINGS_VERSION }, "설정을 옮기지 못했습니다:");

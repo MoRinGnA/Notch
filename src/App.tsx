@@ -52,11 +52,6 @@ export function App() {
     };
   }, []);
 
-  // 테마는 루트에 표시만 해 두고, 실제 색은 CSS 변수가 바꾼다.
-  useEffect(() => {
-    document.documentElement.dataset.theme = settings?.theme === "light" ? "light" : "dark";
-  }, [settings?.theme]);
-
   // 호버 펼침을 끄면 열려 있던 호버 상태도 바로 접는다(고정은 그대로 둔다).
   useEffect(() => {
     if (hoverOpen) return;

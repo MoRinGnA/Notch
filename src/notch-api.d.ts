@@ -84,7 +84,6 @@ interface NotchSettings {
   hoverOpen: boolean;
   toggleShortcut: string;
   hideOnFullscreen: boolean;
-  theme: "dark" | "light";
 }
 
 interface Window {
