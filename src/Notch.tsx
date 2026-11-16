@@ -7,10 +7,12 @@ import {
 } from "react";
 import { fetchLyrics, type Lyrics } from "./lyrics";
 import { cleanTitle, trackName, artistName, displayArtist } from "./mediaText";
-import { SoundMixer, VolumeDeck } from "./AudioControls";
+import { SoundMixer } from "./AudioControls";
 import { DiscordLink, MicStatus, VoiceNow, VoicePanel } from "./VoiceControls";
 import { BatteryLow, Music, Settings2, Zap } from "lucide-react";
 import { useAccent } from "./useAccent";
+import { HudPanel } from "./HudPanel";
+import { MediaPanel } from "./MediaPanel";
 
 interface NotchProps {
   expanded: boolean;
@@ -62,95 +64,6 @@ function resolveView(hasMedia: boolean): NotchView {
   return hasMedia ? "media" : "hud";
 }
 
-// 9x9 도트 날씨 아이콘. 1칸 = 1픽셀, 흑백으로만 그린다.
-const WEATHER_DOTS: Record<string, string[]> = {
-  sun: [
-    "....#....",
-    ".#..#..#.",
-    "..#####..",
-    "..#####..",
-    "#########",
-    "..#####..",
-    "..#####..",
-    ".#..#..#.",
-    "....#....",
-  ],
-  cloud: [
-    ".........",
-    ".........",
-    "....###..",
-    "..#####..",
-    ".#######.",
-    ".#######.",
-    "..#####..",
-    ".........",
-    ".........",
-  ],
-  fog: [
-    ".........",
-    ".........",
-    ".#####...",
-    "...#####.",
-    ".#####...",
-    "...#####.",
-    ".#####...",
-    ".........",
-    ".........",
-  ],
-  rain: [
-    "....###..",
-    "..#####..",
-    ".#######.",
-    "..#####..",
-    ".#.#.#...",
-    "..#.#....",
-    ".#.#.....",
-    ".........",
-    ".........",
-  ],
-  snow: [
-    "....###..",
-    "..#####..",
-    ".#######.",
-    "..#####..",
-    ".#.#.#...",
-    "#.#.#.#..",
-    ".#.#.#...",
-    ".........",
-    ".........",
-  ],
-  thunder: [
-    "....###..",
-    "..#####..",
-    ".#######.",
-    "..#####..",
-    "....##...",
-    "...##....",
-    "..##.....",
-    "..#......",
-    ".........",
-  ],
-};
-
-function WeatherIcon({ kind }: { kind: string }) {
-  const rows = WEATHER_DOTS[kind] ?? WEATHER_DOTS.cloud;
-  return (
-    <svg className="notch-hud-pixel" viewBox={`0 0 ${rows.length} ${rows.length}`} aria-hidden="true">
-      {rows.flatMap((row, y) =>
-        [...row].map((cell, x) =>
-          cell === "#" ? <rect key={`${x}-${y}`} x={x} y={y} width={1} height={1} /> : null,
-        ),
-      )}
-    </svg>
-  );
-}
-
-// 초를 m:ss 로 표시한다.
-function clock(seconds: number): string {
-  const total = Math.max(0, Math.floor(seconds));
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
-}
-
 // NOW 화면의 소스 버튼에 쓸 짧은 앱 이름. AUMID 꼬리와 .exe를 떼고 알아보기 쉬운 이름으로 바꾼다.
 const MEDIA_APP_NAMES: Record<string, string> = {
   chrome: "CHROME", msedge: "EDGE", whale: "WHALE", firefox: "FIREFOX", brave: "BRAVE",
@@ -164,46 +77,6 @@ function mediaAppName(app: string): string {
   if (!/[\\/]/.test(app) && base.includes(".")) base = base.split(".").pop() ?? base;
   const key = base.toLowerCase();
   return (MEDIA_APP_NAMES[key] ?? base.toUpperCase()).slice(0, 18);
-}
-
-function ScrollingTitle({ text, className }: { text: string; className: string }) {
-  const viewportRef = useRef<HTMLSpanElement>(null);
-  const textRef = useRef<HTMLSpanElement>(null);
-  const [overflow, setOverflow] = useState(0);
-
-  useEffect(() => {
-    const viewport = viewportRef.current;
-    const content = textRef.current;
-    if (!viewport || !content) return;
-    let cancelled = false;
-    const measure = () => {
-      if (!cancelled) setOverflow(Math.max(0, content.offsetWidth - viewport.clientWidth));
-    };
-    const observer = new ResizeObserver(measure);
-    observer.observe(viewport);
-    observer.observe(content);
-    measure();
-    void document.fonts.ready.then(measure);
-    return () => {
-      cancelled = true;
-      observer.disconnect();
-    };
-  }, [text]);
-
-  return (
-    <span ref={viewportRef} className={className} title={text}>
-      <span
-        ref={textRef}
-        className={`notch-title-text${overflow > 1 ? " is-overflowing" : ""}`}
-        style={{
-          "--title-shift": `${overflow}px`,
-          "--title-duration": `${Math.max(6, overflow * 2 / 25 + 3)}s`,
-        } as CSSProperties}
-      >
-        {text}
-      </span>
-    </span>
-  );
 }
 
 export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, onHoverEnd }: NotchProps) {
@@ -767,162 +640,9 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
           ) : mixOpen ? (
             <SoundMixer active={expanded} onClose={() => setMixOpen(false)} />
           ) : view === "hud" ? (
-          <div className="notch-hud">
-            <span className="notch-hud-clock">
-              {hudHm}
-              <span className="notch-hud-sec">:{hudSec}</span>
-            </span>
-            <span className="notch-hud-line">
-              <span className="notch-hud-date">{hudDay}</span>
-              {weather && (
-                <span className="notch-hud-weather" title={weather.city ?? undefined}>
-                  <WeatherIcon kind={weather.kind} />
-                  <span>{weather.tempC}°</span>
-                  {weather.city && <span className="notch-hud-city">{weather.city}</span>}
-                </span>
-              )}
-            </span>
-            <div className="notch-hud-reads">
-              <span className={`notch-hud-read${tempHot ? " is-hot" : ""}`}>
-                <span className="notch-hud-label">{hudTempLabel}</span>
-                <span className="notch-hud-value">
-                  {hudTemp}
-                  <span className="notch-hud-unit">°C</span>
-                </span>
-              </span>
-              <span className="notch-hud-read">
-                <span className="notch-hud-label">GPU</span>
-                <span className="notch-hud-value">
-                  {hudGpu}
-                  <span className="notch-hud-unit">%</span>
-                </span>
-              </span>
-            </div>
-            <VolumeDeck active={expanded} onOpenMixer={openMix} />
-            {voiceActive && voice && (
-              <span className="notch-hud-foot">
-                <button
-                  type="button"
-                  className="notch-tool-label"
-                  title="디스코드 음성 열기"
-                  aria-label="디스코드 음성 열기"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    openVoice();
-                  }}
-                >
-                  VOICE
-                </button>
-                <MicStatus voice={voice} inline onToggle={toggleVoice} />
-              </span>
-            )}
-          </div>
+          <HudPanel hudHm={hudHm} hudSec={hudSec} hudDay={hudDay} weather={weather} tempHot={tempHot} hudTempLabel={hudTempLabel} hudTemp={hudTemp} hudGpu={hudGpu} expanded={expanded} openMix={openMix} voiceActive={voiceActive} voice={voice} openVoice={openVoice} toggleVoice={toggleVoice} />
         ) : (
-          <>
-        <div className="notch-info">
-          <span className="notch-info-row">
-            <span className="notch-eq" aria-hidden="true">
-              <i />
-              <i />
-              <i />
-            </span>
-            <span className="notch-stop" aria-hidden="true" />
-            <ScrollingTitle text={shownTitle} className="notch-info-title" />
-          </span>
-          {hasMedia && (displayArtist(media.artist) || metaAlbum) && (
-            <span className="notch-info-meta">
-              {[displayArtist(media.artist), metaAlbum].filter(Boolean).join(" · ")}
-            </span>
-          )}
-        </div>
-        <div className="notch-progress">
-          <span className="notch-time">{hasMedia ? clock(livePosition) : "--:--"}</span>
-          <span className="notch-seg" aria-label="재생 진행률">
-            <span className="notch-seg-fill" style={{ transform: `scaleX(${progress})` }} />
-            <span className="notch-seg-head" style={{ left: `${progress * 100}%` }} />
-          </span>
-          <span className="notch-time">{hasMedia ? clock(media.duration) : "--:--"}</span>
-        </div>
-        {sourceChips.length > 1 && (
-          <div className="notch-sources" role="group" aria-label="재생 소스">
-            {sourceChips.map((source) => (
-              <button
-                key={source.id}
-                type="button"
-                className={`notch-source${source.id === media.id ? " is-on" : ""}`}
-                aria-pressed={source.id === media.id}
-                disabled={playPending}
-                title={`${source.title}${source.artist ? ` · ${source.artist}` : ""}${source.status === "Playing" ? "" : " (일시정지)"}`}
-                onClick={(e) => { e.stopPropagation(); selectSource(source.id); }}
-              >
-                {source.label}
-              </button>
-            ))}
-          </div>
-        )}
-        {hasSynced ? (
-          <div className="notch-lyrics notch-lyrics-synced">
-            <div key={activeLine} className="notch-line is-active">
-              {lyrics.synced[activeLine]?.text || "\u00a0"}
-              {/* 줄이 바뀔 때 이 복제된 글자 위로 빛이 한 번 지나간다 */}
-              <span
-                className="notch-line-shine"
-                aria-hidden="true"
-                style={{ maskPosition: shinePosition, WebkitMaskPosition: shinePosition }}
-              >
-                {lyrics.synced[activeLine]?.text || "\u00a0"}
-              </span>
-            </div>
-          </div>
-        ) : showArt && ytThumb ? (
-          <div className="notch-art-still">
-            <img className="notch-art-still-img" src={ytThumb} alt="" />
-          </div>
-        ) : showArt && media.thumbnail ? (
-          <div className="notch-art">
-            <img className="notch-art-img" src={media.thumbnail} alt="" />
-            {lyricsText ? <span className="notch-art-note">{lyricsText}</span> : null}
-          </div>
-        ) : (
-          <div className="notch-lyrics">{lyricsText}</div>
-        )}
-        {hasSynced && (
-          <span ref={lineMeasureRef} className="notch-line-measure" aria-hidden="true">{widestLyric}</span>
-        )}
-        <div className="notch-controls">
-          <span className="notch-controls-tools">
-          {voiceActive && voice && (
-            <>
-              <button
-                type="button"
-                className="notch-tool-label"
-                title="디스코드 음성 열기"
-                aria-label="디스코드 음성 열기"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  openVoice();
-                }}
-              >
-                VOICE
-              </button>
-              <MicStatus voice={voice} inline onToggle={toggleVoice} />
-            </>
-          )}
-          </span>
-          <span className="notch-controls-group">
-            <button type="button" className="notch-btn" onClick={control("Previous")} disabled={playPending || !media.canPrev} aria-label="이전">
-              PREV
-            </button>
-            <button type="button" className="notch-btn" onClick={control("Play")} disabled={playPending || !media.canPlayPause} aria-label="재생/일시정지">
-              {media.status === "Playing" ? "PAUSE" : "PLAY"}
-            </button>
-            <button type="button" className="notch-btn" onClick={control("Next")} disabled={playPending || !media.canNext} aria-label="다음">
-              NEXT
-            </button>
-          </span>
-          <VolumeDeck active={expanded} onOpenMixer={openMix} />
-        </div>
-          </>
+          <MediaPanel shownTitle={shownTitle} hasMedia={hasMedia} media={media} metaAlbum={metaAlbum} livePosition={livePosition} progress={progress} sourceChips={sourceChips} playPending={playPending} selectSource={selectSource} hasSynced={hasSynced} activeLine={activeLine} lyrics={lyrics} shinePosition={shinePosition} showArt={showArt} ytThumb={ytThumb} lyricsText={lyricsText} lineMeasureRef={lineMeasureRef} widestLyric={widestLyric} voiceActive={voiceActive} voice={voice} openVoice={openVoice} toggleVoice={toggleVoice} control={control} expanded={expanded} openMix={openMix} />
         )}
         </div>
       </div>
