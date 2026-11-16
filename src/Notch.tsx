@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
@@ -539,18 +540,32 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
           : HUD_WIDTH
     : view === "media" ? 440 : null;
 
-  useEffect(() => {
+  // 전환 중에는 그리기와 입력이 모두 제한되는 Windows shape를 넉넉하게 유지한다.
+  useLayoutEffect(() => {
     const notch = notchRef.current;
     if (!notch || !window.notchApi) return;
-    const updateBounds = () => {
-      const { x, y, width, height } = notch.getBoundingClientRect();
-      window.notchApi?.setNotchBounds({ x, y, width, height });
+    const current = notch.getBoundingClientRect();
+    const width = notchWidth ?? 154;
+    const height = expanded ? (view === "hud" && !mixOpen && !voiceOpen && !linkOpen ? 272 : 320) : 40;
+    const targetLeft = (window.innerWidth - width) / 2;
+    const left = Math.min(current.left, targetLeft) - 8;
+    const right = Math.max(current.right, targetLeft + width) + 8;
+    const bottom = Math.max(current.bottom, current.top + height) + 8;
+    window.notchApi.setNotchBounds({ x: left, y: current.top, width: right - left, height: bottom - current.top });
+
+    let timer: number;
+    const scheduleCorrection = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        const { x, y, width: finalWidth, height: finalHeight } = notch.getBoundingClientRect();
+        window.notchApi?.setNotchBounds({ x, y, width: finalWidth, height: finalHeight });
+      }, 400);
     };
-    const observer = new ResizeObserver(updateBounds);
+    const observer = new ResizeObserver(scheduleCorrection);
     observer.observe(notch);
-    updateBounds();
-    return () => observer.disconnect();
-  }, []);
+    scheduleCorrection();
+    return () => { window.clearTimeout(timer); observer.disconnect(); };
+  }, [expanded, notchWidth, view, mixOpen, voiceOpen, linkOpen]);
 
   const showArt = lyrics.state === "missing" || lyrics.state === "instrumental" || lyrics.state === "idle";
   const lyricsText =
