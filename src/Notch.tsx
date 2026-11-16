@@ -36,6 +36,8 @@ const MEDIA_POLL_MS = 2000;
 const BATTERY_POLL_MS = 30000;
 // 펼친 화면의 기본 폭(HUD 또는 미디어 패널).
 const EXPANDED_WIDTH = 600;
+// HUD는 네 줄짜리 판독 화면이라 미디어 패널보다 좁게 잡아 빈 자리를 남기지 않는다.
+const HUD_WIDTH = 480;
 
 const LYRICS_GAP_MS = 300;
 const LYRICS_CACHE_LIMIT = 50;
@@ -413,82 +415,6 @@ function ScrollingTitle({ text, className }: { text: string; className: string }
       </span>
     </span>
   );
-}
-
-function extractMediaAccent(image: HTMLImageElement): string {
-  try {
-    if (!image.complete || !image.naturalWidth || !image.naturalHeight) return "#e8833a";
-    const canvas = document.createElement("canvas");
-    const side = 24;
-    canvas.width = side;
-    canvas.height = side;
-    const context = canvas.getContext("2d", { willReadFrequently: true });
-    if (!context) return "#e8833a";
-    context.drawImage(image, 0, 0, side, side);
-    const { data } = context.getImageData(0, 0, side, side);
-    const bins = new Map<number, { score: number; red: number; green: number; blue: number; weight: number }>();
-    for (let i = 0; i < data.length; i += 4) {
-      if (data[i + 3] < 200) continue;
-      const r = data[i];
-      const g = data[i + 1];
-      const b = data[i + 2];
-      const high = Math.max(r, g, b);
-      const low = Math.min(r, g, b);
-      const saturation = high === 0 ? 0 : (high - low) / high;
-      const brightness = high / 255;
-      if (brightness < 0.12) continue;
-      const key = ((r >> 5) << 6) | ((g >> 5) << 3) | (b >> 5);
-      const weight = 0.25 + saturation;
-      const bin = bins.get(key) ?? { score: 0, red: 0, green: 0, blue: 0, weight: 0 };
-      bin.score += weight;
-      bin.red += r * weight;
-      bin.green += g * weight;
-      bin.blue += b * weight;
-      bin.weight += weight;
-      bins.set(key, bin);
-    }
-    const dominant = [...bins.values()].sort((a, b) => b.score - a.score)[0];
-    if (!dominant?.weight) return "#e8833a";
-    // Use the most common saturated color bucket rather than the cover's potentially muddy average.
-    const channels = [dominant.red, dominant.green, dominant.blue].map((sum) => Math.round(sum / dominant.weight));
-    const [red, green, blue] = channels.map((channel) => channel / 255);
-    const high = Math.max(red, green, blue);
-    const low = Math.min(red, green, blue);
-    const delta = high - low;
-    if (high * 255 < 34 || delta * 255 < 18) return "#e8833a";
-
-    // Lift dark cover colors in HSL so their hue survives but the accent stays legible on black.
-    const lightness = (high + low) / 2;
-    const saturation = delta === 0 ? 0 : delta / (1 - Math.abs(2 * lightness - 1));
-    const rawHue = delta === 0
-      ? 0
-      : high === red
-        ? 60 * (((green - blue) / delta) % 6)
-        : high === green
-          ? 60 * ((blue - red) / delta + 2)
-          : 60 * ((red - green) / delta + 4);
-    const hue = ((rawHue % 360) + 360) % 360;
-    const liftedLightness = Math.max(lightness, 0.82);
-    const chroma = (1 - Math.abs(2 * liftedLightness - 1)) * saturation;
-    const huePart = chroma * (1 - Math.abs(((hue / 60) % 2) - 1));
-    const offset = liftedLightness - chroma / 2;
-    const lifted = hue < 60
-      ? [chroma, huePart, 0]
-      : hue < 120
-        ? [huePart, chroma, 0]
-        : hue < 180
-          ? [0, chroma, huePart]
-          : hue < 240
-            ? [0, huePart, chroma]
-            : hue < 300
-              ? [huePart, 0, chroma]
-              : [chroma, 0, huePart];
-    const brightChannels = lifted.map((channel) => Math.round((channel + offset) * 255));
-    return `#${brightChannels.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
-  } catch {
-    // Tainted or unsupported image sources fall back to the existing accent.
-    return "#e8833a";
-  }
 }
 
 // 미디어 키·다른 앱의 볼륨 변경도 놓치지 않을 만큼 짧게 확인한다.
@@ -1370,7 +1296,6 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
   }, []);
 
   const [media, setMedia] = useState<NotchMedia>(EMPTY_MEDIA);
-  const [mediaAccent, setMediaAccent] = useState("#e8833a");
   const [lyrics, setLyrics] = useState<Lyrics>({ state: "idle", text: "", synced: [] });
   const [now, setNow] = useState(() => Date.now());
   const [battery, setBattery] = useState<NotchBattery | null>(null);
@@ -1589,28 +1514,6 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
       })
       .catch((error: unknown) => console.warn("미디어 소스 전환 실패:", error));
   };
-  // 표지가 있는 한 일시정지 중에도 그 곡의 대표색을 유지한다. 미디어가 사라질 때만 기본색으로 돌아간다.
-  const mediaAccentSource = hasMedia ? media.thumbnail : "";
-
-  useEffect(() => {
-    let cancelled = false;
-    if (!mediaAccentSource) {
-      setMediaAccent("#e8833a");
-      return;
-    }
-    const image = new Image();
-    image.onload = () => {
-      if (!cancelled) setMediaAccent(extractMediaAccent(image));
-    };
-    image.onerror = () => {
-      if (!cancelled) setMediaAccent("#e8833a");
-    };
-    image.src = mediaAccentSource;
-    if (image.complete && image.naturalWidth > 0) setMediaAccent(extractMediaAccent(image));
-    return () => {
-      cancelled = true;
-    };
-  }, [mediaAccentSource]);
   const view = resolveView(hasMedia);
 
   // 미디어가 없을 때 펼친 화면은 HUD만 보여준다. 시계와 온도는 그때만 돈다.
@@ -1783,10 +1686,10 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
   const hudHm = `${pad2(hudDate.getHours())}:${pad2(hudDate.getMinutes())}`;
   const hudSec = pad2(hudDate.getSeconds());
   const hudDay = `${hudDate.getFullYear()}.${pad2(hudDate.getMonth() + 1)}.${pad2(hudDate.getDate())} ${hudDate.toLocaleDateString("en-US", { weekday: "short" }).toUpperCase()}`;
-  const hudTemp = (temp === null ? "--" : String(Math.round(temp.value))).padStart(3, " ");
+  const hudTemp = temp === null ? "--" : String(Math.round(temp.value));
   // ACPI 열 구역까지 내려간 값은 CPU 다이 온도가 아니므로 라벨을 바꾼다. 앞자리를 4칸으로 맞춰 숫자 열은 그대로.
-  const hudTempLabel = (temp?.source === "acpi" ? "ACPI" : "CPU").padEnd(4, " ");
-  const hudGpu = (gpu === null ? "--" : String(Math.round(gpu))).padStart(3, " ");
+  const hudTempLabel = temp?.source === "acpi" ? "ACPI" : "CPU";
+  const hudGpu = gpu === null ? "--" : String(Math.round(gpu));
   const tempHot = temp !== null && temp.value >= 85;
   // 제목과 같은 앨범은 중복이라 메타 줄에서 뺀다.
   const metaAlbum =
@@ -1881,11 +1784,13 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
 
   // HUD는 미디어 가사 폭을 물려받지 않고 기본 폭으로 돌아온다.
   const notchWidth = expanded
-    ? mixOpen
+    ? mixOpen || voiceOpen || linkOpen
       ? EXPANDED_WIDTH
       : view === "media" && hasSynced && widestLyric
         ? expandedWidth ?? EXPANDED_WIDTH
-        : EXPANDED_WIDTH
+        : view === "media"
+          ? EXPANDED_WIDTH
+          : HUD_WIDTH
     : collapsedWidth;
 
   const showArt = lyrics.state === "missing" || lyrics.state === "instrumental" || lyrics.state === "idle";
@@ -1903,10 +1808,9 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
       ref={notchRef}
       role="button"
       tabIndex={0}
-      className={`notch ${expanded ? "is-expanded" : "is-collapsed"}${view === "media" ? " has-media" : ""}${mixOpen ? " has-mix" : ""}${media.status === "Playing" ? " is-playing" : ""}${!expanded && collapsedBadge ? " has-status" : ""}${showMic ? " has-voice" : ""}`}
+      className={`notch ${expanded ? "is-expanded" : "is-collapsed"}${view === "media" ? " has-media" : ""}${view === "hud" && !mixOpen && !voiceOpen && !linkOpen ? " has-hud" : ""}${mixOpen ? " has-mix" : ""}${media.status === "Playing" ? " is-playing" : ""}${!expanded && collapsedBadge ? " has-status" : ""}${showMic ? " has-voice" : ""}`}
       style={{
         ...(notchWidth ? { width: `${notchWidth}px` } : {}),
-        "--media-accent": mediaAccent,
       } as CSSProperties}
       onClick={(event) => {
         // 마이크 아이콘의 클릭은 상위로 올리지 않는다(노치 고정/해제로 새면 안 됨).
@@ -2000,46 +1904,54 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
             <SoundMixer active={expanded} onClose={() => setMixOpen(false)} />
           ) : view === "hud" ? (
           <div className="notch-hud">
-            <span className="notch-hud-top">
-              <span className="notch-hud-clock">
-                {hudHm}
-                <span className="notch-hud-sec">:{hudSec}</span>
-              </span>
+            <span className="notch-hud-clock">
+              {hudHm}
+              <span className="notch-hud-sec">:{hudSec}</span>
+            </span>
+            <span className="notch-hud-line">
+              <span className="notch-hud-date">{hudDay}</span>
               {weather && (
-                <span className="notch-hud-weather">
-                  {weather.city && <span className="notch-hud-city" title={weather.city}>{weather.city}</span>}
-                  <span className="notch-hud-weather-reading">
-                    <WeatherIcon kind={weather.kind} />
-                    <span className="notch-hud-temp">{weather.tempC}°</span>
-                  </span>
+                <span className="notch-hud-weather" title={weather.city ?? undefined}>
+                  <WeatherIcon kind={weather.kind} />
+                  <span>{weather.tempC}°</span>
+                  {weather.city && <span className="notch-hud-city">{weather.city}</span>}
                 </span>
               )}
             </span>
-            <span className="notch-hud-date">{hudDay}</span>
-            <span className="notch-hud-strip">
-              <span className="notch-hud-readings">
-                <span className={`notch-hud-thermal${tempHot ? " is-hot" : ""}`}>{`${hudTempLabel}${hudTemp}°C`}</span>
-                <span>{`GPU ${hudGpu}%`}</span>
-                {voiceActive && voice && (
-                  <>
-                    <button
-                      type="button"
-                      className="notch-tool-label"
-                      title="디스코드 음성 열기"
-                      aria-label="디스코드 음성 열기"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        openVoice();
-                      }}
-                    >
-                      VOICE
-                    </button>
-                    <MicStatus voice={voice} inline onToggle={toggleVoice} />
-                  </>
-                )}
+            <div className="notch-hud-reads">
+              <span className={`notch-hud-read${tempHot ? " is-hot" : ""}`}>
+                <span className="notch-hud-label">{hudTempLabel}</span>
+                <span className="notch-hud-value">
+                  {hudTemp}
+                  <span className="notch-hud-unit">°C</span>
+                </span>
               </span>
-              <VolumeDeck active={expanded} onOpenMixer={openMix} />
-            </span>
+              <span className="notch-hud-read">
+                <span className="notch-hud-label">GPU</span>
+                <span className="notch-hud-value">
+                  {hudGpu}
+                  <span className="notch-hud-unit">%</span>
+                </span>
+              </span>
+            </div>
+            <VolumeDeck active={expanded} onOpenMixer={openMix} />
+            {voiceActive && voice && (
+              <span className="notch-hud-foot">
+                <button
+                  type="button"
+                  className="notch-tool-label"
+                  title="디스코드 음성 열기"
+                  aria-label="디스코드 음성 열기"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    openVoice();
+                  }}
+                >
+                  VOICE
+                </button>
+                <MicStatus voice={voice} inline onToggle={toggleVoice} />
+              </span>
+            )}
           </div>
         ) : (
           <>
