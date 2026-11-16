@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, Menu, nativeImage, powerMonitor, screen, shell, Tray } from "electron";
+import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, powerMonitor, screen, shell, Tray } from "electron";
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -292,7 +292,7 @@ if ($engines.Count -eq 0) { 'null'; exit }
 $totals = @{}
 foreach ($engine in $engines) {
   $name = [string]$engine.Name
-  if ($name -notmatch '^pid_\\d+_(luid_.*)$') { continue }
+  if ($name -notmatch '^pid_\d+_(luid_.*)$') { continue }
   $key = $Matches[1]
   if (-not $totals.ContainsKey($key)) { $totals[$key] = 0.0 }
   $totals[$key] += [double]$engine.UtilizationPercentage
@@ -450,91 +450,6 @@ ipcMain.handle("notch:audio-device", async (): Promise<AudioDevice | null> => {
     if (state?.device) audioDevice = state.device;
   }
   return audioDevice;
-});
-
-// 복사한 텍스트 기록. 디스크에 쓰지 않고 실행 중인 동안만 메모리에 둔다.
-// 비밀번호 관리자 같은 앱이 넣은 값도 파일로 남지 않게 하려는 선택이다.
-interface ClipItem {
-  id: number;
-  text: string;
-  at: number;
-}
-
-const CLIP_LIMIT = 20;
-// 너무 긴 내용은 노치 목록에서 읽을 수 없고 payload만 커지므로 담지 않는다.
-const CLIP_MAX_CHARS = 20000;
-const CLIP_PREVIEW_CHARS = 160;
-
-let clipItems: ClipItem[] = [];
-let clipSeq = 0;
-// 마지막으로 확인한 클립보드 내용. 같은 내용을 다시 쌓지 않기 위해 둔다.
-let clipSeen = "";
-
-// 목록에는 한 줄 미리보기만 담아 IPC로 큰 문자열을 계속 보내지 않는다.
-function clipPreview(text: string): string {
-  return text.replace(/\s+/g, " ").trim().slice(0, CLIP_PREVIEW_CHARS);
-}
-
-function rememberClipboard(text: string): void {
-  if (!text || text === clipSeen) return;
-  clipSeen = text;
-  if (text.length > CLIP_MAX_CHARS) return;
-  clipItems = clipItems.filter((item) => item.text !== text);
-  clipItems.unshift({ id: ++clipSeq, text, at: Date.now() });
-  if (clipItems.length > CLIP_LIMIT) clipItems.length = CLIP_LIMIT;
-}
-
-let clipTimer: NodeJS.Timeout | null = null;
-
-// 클립보드에는 변경 이벤트가 없어 짧은 간격으로 읽어 비교한다.
-// 읽기는 Promise이므로 앞선 조회가 끝나기 전에는 다음 조회를 겹쳐 보내지 않는다.
-function startClipboardWatcher(): void {
-  if (clipTimer) return;
-  let busy = false;
-  const read = () => {
-    if (busy) return;
-    busy = true;
-    void clipboard
-      .readText()
-      .then(rememberClipboard)
-      // 읽지 못하면 다음 간격에 다시 시도한다.
-      .catch(() => undefined)
-      .finally(() => {
-        busy = false;
-      });
-  };
-  read();
-  clipTimer = setInterval(read, 600);
-}
-
-ipcMain.handle("notch:clip-list", () =>
-  clipItems.map((item) => ({ id: item.id, at: item.at, preview: clipPreview(item.text) })),
-);
-
-ipcMain.handle("notch:clip-copy", async (_event, id: unknown): Promise<boolean> => {
-  if (typeof id !== "number" || !Number.isFinite(id)) return false;
-  const item = clipItems.find((entry) => entry.id === id);
-  if (!item) return false;
-  try {
-    await clipboard.writeText(item.text);
-  } catch {
-    return false;
-  }
-  clipSeen = item.text;
-  // 방금 고른 항목을 맨 위(현재 클립보드)로 올린다.
-  clipItems = [item, ...clipItems.filter((entry) => entry.id !== item.id)];
-  return true;
-});
-
-ipcMain.handle("notch:clip-clear", async (): Promise<boolean> => {
-  clipItems = [];
-  // 지운 시점의 클립보드 내용이 다음 조회에서 다시 쌓이지 않게 기준을 옮긴다.
-  try {
-    clipSeen = await clipboard.readText();
-  } catch {
-    clipSeen = "";
-  }
-  return true;
 });
 
 interface MediaSessionRow {
@@ -1177,8 +1092,8 @@ function createWindow(): void {
     resizable: false,
     alwaysOnTop: true,
     skipTaskbar: true,
-    // 클릭해도 창이 활성화되지 않게 한다. 노치에서 클립보드 항목을 고른 뒤
-    // 사용자가 보던 앱이 그대로 앞에 있어야 바로 붙여넣을 수 있다.
+    // 클릭해도 창이 활성화되지 않게 한다. 노치를 조작하는 동안
+    // 사용자가 보던 앱이 그대로 앞에 있어야 한다.
     focusable: false,
     hasShadow: false,
     icon: path.join(__dirname, "../assets/icon.png"),
@@ -1239,7 +1154,6 @@ if (!app.requestSingleInstanceLock()) {
 
     // Windows에서 노치의 작업표시줄 앱 ID를 Notch로 고정한다.
     app.setAppUserModelId("com.notch.app");
-    startClipboardWatcher();
     // Discord가 켜져 있을 때만 붙는다(로컬 IPC). 없으면 조용히 재시도만 한다.
     startDiscordBridge();
     createTray();
@@ -1256,8 +1170,6 @@ if (!app.requestSingleInstanceLock()) {
 
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
-  if (clipTimer) clearInterval(clipTimer);
-  clipTimer = null;
   discordBridge?.dispose();
   discordBridge = null;
   audioBridge?.dispose();

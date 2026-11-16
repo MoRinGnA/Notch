@@ -1084,10 +1084,6 @@ function SoundMixer({ active, onClose }: { active: boolean; onClose: () => void 
   );
 }
 
-const CLIP_POLL_MS = 1000;
-// 목록은 메인 프로세스가 메모리에만 들고 있다(디스크 저장 없음).
-const CLIP_LIMIT_LABEL = "20";
-
 // 클립보드 기록 화면. 항목을 누르면 그 내용이 다시 클립보드로 들어간다.
 // 마이크 상태는 작은 채움 아이콘으로 보여준다. 아이콘 자체가 포인트 컬러라
 // 검정 본체 위에서도 밝고, 말하는 동안에만 오른쪽 음파가 점등된다.
@@ -1346,114 +1342,6 @@ function VoicePanel({
           CLOSE
         </button>
       </div>
-    </div>
-  );
-}
-
-function ClipShelf({ active, onClose }: { active: boolean; onClose: () => void }) {
-  const [items, setItems] = useState<NotchClipItem[]>([]);
-  // 방금 복사한 항목에만 잠깐 COPIED를 보여 준다.
-  const [doneId, setDoneId] = useState<number | null>(null);
-
-  useEffect(() => {
-    if (!active) return;
-    const api = window.notchApi;
-    if (!api) return;
-    let cancelled = false;
-    const read = () => {
-      void api
-        .getClipboardItems()
-        .then((list) => {
-          if (!cancelled) setItems(list);
-        })
-        .catch(() => undefined);
-    };
-    read();
-    const id = window.setInterval(read, CLIP_POLL_MS);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [active]);
-
-  useEffect(() => {
-    if (doneId === null) return;
-    const id = window.setTimeout(() => setDoneId(null), 1200);
-    return () => window.clearTimeout(id);
-  }, [doneId]);
-
-  const copy = (item: NotchClipItem) => {
-    void window.notchApi
-      ?.copyClipboardItem(item.id)
-      .then((ok) => {
-        if (!ok) return;
-        setDoneId(item.id);
-        // 고른 항목이 맨 위로 오도록 목록을 바로 다시 읽는다.
-        void window.notchApi?.getClipboardItems().then(setItems).catch(() => undefined);
-      })
-      .catch(() => undefined);
-  };
-
-  const clear = () => {
-    void window.notchApi
-      ?.clearClipboard()
-      .then(() => setItems([]))
-      .catch(() => undefined);
-  };
-
-  return (
-    <div className="notch-clip" onClick={(event) => event.stopPropagation()}>
-      <span className="notch-clip-head">
-        <span className="notch-clip-title">CLIPBOARD</span>
-        <span className="notch-clip-count">
-          {String(items.length).padStart(2, "0")} / {CLIP_LIMIT_LABEL}
-        </span>
-      </span>
-      <div className="notch-clip-list">
-        {items.length === 0 ? (
-          <span className="notch-clip-empty">복사한 텍스트가 없습니다.</span>
-        ) : (
-          items.map((item, index) => (
-            <button
-              key={item.id}
-              type="button"
-              className={`notch-clip-row${doneId === item.id ? " is-done" : ""}`}
-              title={item.preview}
-              onClick={(event) => {
-                event.stopPropagation();
-                copy(item);
-              }}
-            >
-              <span className="notch-clip-index">{String(index + 1).padStart(2, "0")}</span>
-              <span className="notch-clip-text">{item.preview || "(빈 내용)"}</span>
-              <span className="notch-clip-act">{doneId === item.id ? "COPIED" : "COPY"}</span>
-            </button>
-          ))
-        )}
-      </div>
-      <span className="notch-clip-foot">
-        <button
-          type="button"
-          className="notch-btn"
-          onClick={(event) => {
-            event.stopPropagation();
-            onClose();
-          }}
-        >
-          BACK
-        </button>
-        <button
-          type="button"
-          className="notch-btn"
-          disabled={items.length === 0}
-          onClick={(event) => {
-            event.stopPropagation();
-            clear();
-          }}
-        >
-          CLEAR
-        </button>
-      </span>
     </div>
   );
 }
@@ -1732,25 +1620,16 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
   const [weather, setWeather] = useState<{ tempC: number; kind: string; city: string } | null>(null);
   // 앱별 볼륨 화면. 펼친 패널 내용만 바꾸고, 접으면 닫힌다.
   const [mixOpen, setMixOpen] = useState(false);
-  // 클립보드 기록 화면. 같은 방식으로 펼친 패널 내용만 바꾼다.
-  const [clipOpen, setClipOpen] = useState(false);
   // 디스코드 전용 화면.
   const [voiceOpen, setVoiceOpen] = useState(false);
   // 트레이에서 연 연결 화면.
   const [linkOpen, setLinkOpen] = useState(false);
   // 세 화면은 같은 자리를 쓰므로 하나를 열면 나머지는 닫는다.
-  const openClip = () => {
-    setMixOpen(false);
-    setVoiceOpen(false);
-    setClipOpen(true);
-  };
   const openMix = () => {
-    setClipOpen(false);
     setVoiceOpen(false);
     setMixOpen(true);
   };
   const openVoice = () => {
-    setClipOpen(false);
     setMixOpen(false);
     setLinkOpen(false);
     setVoiceOpen(true);
@@ -1760,7 +1639,6 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
   useEffect(() => {
     if (!expanded) {
       setMixOpen(false);
-      setClipOpen(false);
       setVoiceOpen(false);
       setLinkOpen(false);
     }
@@ -1831,9 +1709,9 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
       window.clearInterval(id);
     };  }, [expanded, hasMedia]);
 
-  // 데스크탑의 HUD에서만 GPU를 읽고, 이전 조회가 끝난 뒤 다음 조회를 예약한다.
+  // HUD에서 GPU 사용률을 읽고, 이전 조회가 끝난 뒤 다음 조회를 예약한다.
   useEffect(() => {
-    if (!expanded || hasMedia || !battery || battery.hasBattery || !window.notchApi) return;
+    if (!expanded || hasMedia || !window.notchApi) return;
     let cancelled = false;
     let timer: number | undefined;
     const read = async () => {
@@ -1850,7 +1728,7 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [expanded, hasMedia, battery?.hasBattery]);
+  }, [expanded, hasMedia]);
 
   // 날씨는 미디어가 없는 HUD에서만, 10분 간격으로 읽는다.
   useEffect(() => {
@@ -2003,7 +1881,7 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
 
   // HUD는 미디어 가사 폭을 물려받지 않고 기본 폭으로 돌아온다.
   const notchWidth = expanded
-    ? mixOpen || clipOpen
+    ? mixOpen
       ? EXPANDED_WIDTH
       : view === "media" && hasSynced && widestLyric
         ? expandedWidth ?? EXPANDED_WIDTH
@@ -2118,8 +1996,6 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
             <DiscordLink onClose={() => setLinkOpen(false)} />
           ) : voiceOpen && voiceActive && voice ? (
             <VoicePanel voice={voice} onClose={() => setVoiceOpen(false)} onToggle={toggleVoice} />
-          ) : clipOpen ? (
-            <ClipShelf active={expanded} onClose={() => setClipOpen(false)} />
           ) : mixOpen ? (
             <SoundMixer active={expanded} onClose={() => setMixOpen(false)} />
           ) : view === "hud" ? (
@@ -2143,24 +2019,12 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
             <span className="notch-hud-strip">
               <span className="notch-hud-readings">
                 <span className={`notch-hud-thermal${tempHot ? " is-hot" : ""}`}>{`${hudTempLabel}${hudTemp}°C`}</span>
-                {battery && !battery.hasBattery && <span>{`GPU ${hudGpu}%`}</span>}
-                <button
-                  type="button"
-                  className="notch-clip-open"
-                  title="클립보드 기록 열기"
-                  aria-label="클립보드 기록 열기"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    openClip();
-                  }}
-                >
-                  CLIP
-                </button>
+                <span>{`GPU ${hudGpu}%`}</span>
                 {voiceActive && voice && (
                   <>
                     <button
                       type="button"
-                      className="notch-clip-open"
+                      className="notch-tool-label"
                       title="디스코드 음성 열기"
                       aria-label="디스코드 음성 열기"
                       onClick={(event) => {
@@ -2251,23 +2115,11 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
         )}
         <div className="notch-controls">
           <span className="notch-controls-tools">
-          <button
-            type="button"
-            className="notch-clip-open"
-            title="클립보드 기록 열기"
-            aria-label="클립보드 기록 열기"
-            onClick={(event) => {
-              event.stopPropagation();
-              openClip();
-            }}
-          >
-            CLIP
-          </button>
           {voiceActive && voice && (
             <>
               <button
                 type="button"
-                className="notch-clip-open"
+                className="notch-tool-label"
                 title="디스코드 음성 열기"
                 aria-label="디스코드 음성 열기"
                 onClick={(event) => {

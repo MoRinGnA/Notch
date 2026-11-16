@@ -59,10 +59,6 @@ contextBridge.exposeInMainWorld("notchApi", {
     return () => ipcRenderer.removeListener("notch:audio-device", listener);
   },
   openSoundSettings: () => ipcRenderer.invoke("notch:sound-settings") as Promise<boolean>,
-  getClipboardItems: () =>
-    ipcRenderer.invoke("notch:clip-list") as Promise<{ id: number; at: number; preview: string }[]>,
-  copyClipboardItem: (id: number) => ipcRenderer.invoke("notch:clip-copy", id) as Promise<boolean>,
-  clearClipboard: () => ipcRenderer.invoke("notch:clip-clear") as Promise<boolean>,
   getVoiceState: () => ipcRenderer.invoke("notch:voice-state") as Promise<{
     inChannel: boolean;
     muted: boolean;

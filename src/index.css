@@ -1292,7 +1292,6 @@ body,
   border-top: 1px solid rgba(255, 255, 255, 0.14);
 }
 
-/* 클립보드 기록: 앱별 볼륨과 같은 머리·목록·발 구조를 그대로 쓴다. */
 /* 디스코드 연결 화면(트레이에서 열 때만). */
 .notch-link {
   flex: 1;
@@ -1511,133 +1510,8 @@ body,
   pointer-events: none;
 }
 
-.notch-clip {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-
-.notch-clip-head {
-  flex: none;
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  padding-bottom: 5px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
-}
-
-.notch-clip-title {
-  font-family: "Consolas", "Courier New", monospace;
-  font-size: 9px;
-  letter-spacing: 0.22em;
-  color: rgba(255, 255, 255, 0.8);
-}
-
-.notch-clip-count {
-  flex: none;
-  font-family: "Consolas", "Courier New", monospace;
-  font-size: 9px;
-  letter-spacing: 0.16em;
-  color: rgba(255, 255, 255, 0.45);
-  font-variant-numeric: tabular-nums;
-}
-
-.notch-clip-list {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.notch-clip-list::-webkit-scrollbar {
-  width: 0;
-}
-
-/* 한 줄이 곧 버튼이다. 번호·내용·동작 세 칸으로 나눠 목록처럼 읽힌다. */
-.notch-clip-row {
-  flex: none;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  padding: 3px 5px;
-  border: 1px solid transparent;
-  background: transparent;
-  color: rgba(255, 255, 255, 0.82);
-  font-family: "Consolas", "Courier New", monospace;
-  font-size: 10px;
-  letter-spacing: 0.04em;
-  text-align: left;
-  cursor: pointer;
-  transition: background 0.12s, color 0.12s, border-color 0.12s;
-}
-
-.notch-clip-row:hover {
-  border-color: rgba(255, 255, 255, 0.24);
-  color: #ffffff;
-}
-
-.notch-clip-index {
-  flex: none;
-  font-size: 9px;
-  letter-spacing: 0.1em;
-  color: rgba(255, 255, 255, 0.32);
-  font-variant-numeric: tabular-nums;
-}
-
-.notch-clip-text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.notch-clip-act {
-  flex: none;
-  font-size: 8px;
-  letter-spacing: 0.14em;
-  color: rgba(255, 255, 255, 0.38);
-}
-
-.notch-clip-row:hover .notch-clip-act {
-  color: #ffffff;
-}
-
-/* 방금 복사한 줄은 흑백 반전으로만 알린다. */
-.notch-clip-row.is-done {
-  background: #ffffff;
-  border-color: #ffffff;
-  color: #000000;
-}
-
-.notch-clip-row.is-done .notch-clip-index,
-.notch-clip-row.is-done .notch-clip-act {
-  color: rgba(0, 0, 0, 0.6);
-}
-
-.notch-clip-empty {
-  font-family: "Consolas", "Courier New", monospace;
-  font-size: 10px;
-  letter-spacing: 0.06em;
-  color: rgba(255, 255, 255, 0.4);
-}
-
-.notch-clip-foot {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding-top: 4px;
-  border-top: 1px solid rgba(255, 255, 255, 0.14);
-}
-
-/* 펼친 화면 어디서든 클립보드 기록으로 들어가는 라벨(VOL 라벨과 같은 모양). */
-.notch-clip-open {
+/* 펼친 화면 도구 자리의 라벨(디스코드 음성 열기, VOL 라벨과 같은 모양). */
+.notch-tool-label {
   flex: none;
   padding: 1px 2px;
   border: none;
@@ -1651,14 +1525,8 @@ body,
   transition: color 0.12s ease;
 }
 
-.notch-clip-open:hover {
+.notch-tool-label:hover {
   color: #ffffff;
-}
-
-/* 미디어 화면의 버튼 줄은 3칸 그리드다. CLIP은 빈 왼쪽 칸에 앉힌다. */
-.notch-controls > .notch-clip-open {
-  grid-column: 1;
-  justify-self: start;
 }
 
 /* 출력 장치가 바뀌었을 때 펼친 패널 위에 잠깐 남기는 한 줄 */
