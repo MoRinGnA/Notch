@@ -38,6 +38,9 @@ export interface AudioBridge {
   setAppLevel: (pid: number, level: number) => Promise<boolean>;
   setAppMuted: (pid: number, muted: boolean) => Promise<boolean>;
   onDevice: (callback: (device: AudioDevice) => void) => () => void;
+  // 가사 정렬용 루프백 녹음. 시작하면 샘플레이트를, 중지하면 쓴 바이트 수를 돌려준다.
+  beginCapture: (file: string) => Promise<number | null>;
+  endCapture: () => Promise<number>;
   dispose: () => void;
 }
 
@@ -235,6 +238,24 @@ export function createAudioBridge(exePath: string): AudioBridge {
       return () => {
         deviceListeners.delete(callback);
       };
+    },
+    async beginCapture(file: string) {
+      try {
+        const payload = await request(`pcm.begin ${file}`);
+        const rate = Number.parseInt(payload.replace(/^rate=/, ""), 10);
+        return Number.isFinite(rate) && rate > 0 ? rate : null;
+      } catch {
+        return null;
+      }
+    },
+    async endCapture() {
+      try {
+        const payload = await request("pcm.stop");
+        const bytes = Number.parseInt(payload.replace(/^bytes=/, ""), 10);
+        return Number.isFinite(bytes) ? bytes : 0;
+      } catch {
+        return 0;
+      }
     },
     dispose() {
       const child = proc;

@@ -6,7 +6,7 @@ import {
   type CSSProperties,
   type MouseEvent,
 } from "react";
-import { fetchLyrics, type Lyrics } from "./lyrics";
+import { fetchLyrics, lyricPolicy, type Lyrics } from "./lyrics";
 import { cleanTitle, trackName, artistName, displayArtist } from "./mediaText";
 import { SoundMixer } from "./AudioControls";
 import { DiscordLink, MicStatus, VoiceNow, VoicePanel } from "./VoiceControls";
@@ -251,6 +251,11 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
       return;
     }
     let cancelled = false;
+    // 영상 재생(뮤직비디오·공연)이면 줄 시각을 믿을 수 없으므로 가사를 띄우지 않는다.
+    if (lyricPolicy(current) === "off") {
+      setLyrics({ state: "off", text: "", synced: [] });
+      return;
+    }
     setLyrics({ state: "loading", text: "", synced: [] });
     void fetchLyrics(current).then((result) => {
       if (!cancelled) setLyrics(result);
@@ -258,7 +263,10 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
     return () => {
       cancelled = true;
     };
-  }, [mediaKey]);
+  }, [mediaKey, media.app]);
+
+  // 직접 정렬은 싱크 가사가 없는 곡에서도 믿을 만한 결과를 내지 못해 지금은 쓰지 않는다.
+  // (뮤직비디오 인트로·대사 구간에 가사를 밀어넣는 문제가 실측으로 확인됨)
 
   // 가사를 찾지 못한 곡은 유튜브 썸네일을 앨범처럼 띄운다. 실패하면 기존 앨범 아트로 돌아간다.
   useEffect(() => {

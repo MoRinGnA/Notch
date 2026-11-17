@@ -109,6 +109,32 @@ namespace NotchAudio
         [PreserveSig] int GetMute([MarshalAs(UnmanagedType.Bool)] out bool mute);
     }
 
+    // WASAPI 루프백 캡처. 정렬기(가사 싱크)용 PCM을 파일로 떨군다.
+    [ComImport, Guid("1CB9AD4C-DBFA-4C32-B178-C2F568A703B2"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IAudioClient
+    {
+        [PreserveSig] int Initialize(int shareMode, int streamFlags, long bufferDuration, long periodicity, IntPtr format, IntPtr sessionGuid);
+        [PreserveSig] int GetBufferSize(out uint frames);
+        [PreserveSig] int GetStreamLatency(out long latency);
+        [PreserveSig] int GetCurrentPadding(out uint padding);
+        [PreserveSig] int IsFormatSupported(int shareMode, IntPtr format, out IntPtr closest);
+        [PreserveSig] int GetMixFormat(out IntPtr format);
+        [PreserveSig] int GetDevicePeriod(out long defaultPeriod, out long minPeriod);
+        [PreserveSig] int Start();
+        [PreserveSig] int Stop();
+        [PreserveSig] int Reset();
+        [PreserveSig] int SetEventHandle(IntPtr handle);
+        [PreserveSig] int GetService(ref Guid iid, out IntPtr service);
+    }
+
+    [ComImport, Guid("C8ADBD64-E71E-48A0-A4DE-185C395CD317"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IAudioCaptureClient
+    {
+        [PreserveSig] int GetBuffer(out IntPtr data, out uint frames, out int flags, out long devicePosition, out long qpcPosition);
+        [PreserveSig] int ReleaseBuffer(uint frames);
+        [PreserveSig] int GetNextPacketSize(out uint frames);
+    }
+
     // 세션의 실제 출력 레벨(0~1). 앱별 미터를 그리는 데 쓴다.
     [ComImport, Guid("C02216F6-8C67-4B5B-9D00-D008E73E0064"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     internal interface IAudioMeterInformation
@@ -458,6 +484,162 @@ namespace NotchAudio
         {
             ApplyToSession(pid, -1, muted ? 1 : 0);
         }
+
+        // 루프백은 별도 스레드에서 계속 받아 두어, 녹음 중에도 볼륨·피크 질의가 막히지 않는다.
+        public static bool Capturing
+        {
+            get { return _capture != null && _capture.Running; }
+        }
+
+        public static string BeginCapture(string path)
+        {
+            if (_capture != null && _capture.Running) _capture.Stop();
+            _capture = new LoopbackCapture();
+            _capture.Start(path);
+            return _capture.Rate.ToString(CultureInfo.InvariantCulture);
+        }
+
+        public static long EndCapture()
+        {
+            if (_capture == null) return 0;
+            long bytes = _capture.Bytes;
+            _capture.Stop();
+            _capture = null;
+            return bytes;
+        }
+
+        public static long CaptureBytes()
+        {
+            return _capture != null ? _capture.Bytes : 0;
+        }
+
+        private static LoopbackCapture _capture;
+
+    // WASAPI 루프백을 백그라운드 스레드에서 받아 s16le mono(장치 샘플레이트)로 파일에 이어 쓴다.
+    // 녹음 중에도 표준입출력 루프가 막히지 않도록 COM은 이 스레드에서만 만진다.
+    internal sealed class LoopbackCapture
+    {
+        private System.Threading.Thread _thread;
+        private volatile bool _running;
+        private long _bytes;
+        private string _path;
+
+        public int Rate { get; private set; }
+
+        public bool Running
+        {
+            get { return _running; }
+        }
+
+        public long Bytes
+        {
+            get { return System.Threading.Interlocked.Read(ref _bytes); }
+        }
+
+        public void Start(string path)
+        {
+            _path = path;
+            _bytes = 0;
+            _running = true;
+            _thread = new System.Threading.Thread(Run);
+            _thread.SetApartmentState(System.Threading.ApartmentState.MTA);
+            _thread.IsBackground = true;
+            _thread.Start();
+            // 파일과 장치가 준비될 때까지 잠깐 기다려 호출자가 샘플레이트를 바로 쓸 수 있게 한다.
+            for (int i = 0; i < 150 && Rate == 0 && _running; i++) System.Threading.Thread.Sleep(10);
+        }
+
+        public void Stop()
+        {
+            _running = false;
+            System.Threading.Thread thread = _thread;
+            _thread = null;
+            if (thread == null) return;
+            try { thread.Join(2000); } catch { }
+        }
+
+        private void Run()
+        {
+            IAudioClient client = null;
+            IAudioCaptureClient capture = null;
+            IntPtr format = IntPtr.Zero;
+            System.IO.FileStream file = null;
+            try
+            {
+                MMDeviceEnumerator factory = new MMDeviceEnumerator();
+                IMMDeviceEnumerator enumerator = (IMMDeviceEnumerator)factory;
+                IMMDevice device;
+                Marshal.ThrowExceptionForHR(enumerator.GetDefaultAudioEndpoint(0, 1, out device));
+                Guid iid = typeof(IAudioClient).GUID;
+                object instance;
+                Marshal.ThrowExceptionForHR(device.Activate(ref iid, 23, IntPtr.Zero, out instance));
+                client = (IAudioClient)instance;
+                Marshal.ThrowExceptionForHR(client.GetMixFormat(out format));
+                int channels = Marshal.ReadInt16(format, 2);
+                int rate = Marshal.ReadInt32(format, 4);
+                int bits = Marshal.ReadInt16(format, 14);
+                Rate = rate;
+                // 공유 모드 + 루프백. 버퍼는 1초.
+                Marshal.ThrowExceptionForHR(client.Initialize(0, 0x00020000, 10000000, 0, format, IntPtr.Zero));
+                Guid captureIid = typeof(IAudioCaptureClient).GUID;
+                IntPtr servicePtr;
+                Marshal.ThrowExceptionForHR(client.GetService(ref captureIid, out servicePtr));
+                capture = (IAudioCaptureClient)Marshal.GetObjectForIUnknown(servicePtr);
+                Marshal.Release(servicePtr);
+                file = new System.IO.FileStream(_path, System.IO.FileMode.Create, System.IO.FileAccess.Write, System.IO.FileShare.ReadWrite);
+                Marshal.ThrowExceptionForHR(client.Start());
+                while (_running)
+                {
+                    System.Threading.Thread.Sleep(20);
+                    uint packet;
+                    while (capture.GetNextPacketSize(out packet) == 0 && packet > 0)
+                    {
+                        IntPtr data;
+                        uint frames;
+                        int flags;
+                        long devicePosition;
+                        long qpcPosition;
+                        if (capture.GetBuffer(out data, out frames, out flags, out devicePosition, out qpcPosition) != 0) break;
+                        if (frames > 0)
+                        {
+                            byte[] buffer = new byte[frames * 2];
+                            for (int i = 0; i < frames; i++)
+                            {
+                                float sum = 0f;
+                                for (int c = 0; c < channels; c++)
+                                {
+                                    int offset = (i * channels + c) * (bits / 8);
+                                    if (bits == 32) sum += Marshal.PtrToStructure<float>(IntPtr.Add(data, offset));
+                                    else if (bits == 16) sum += (short)Marshal.ReadInt16(data, offset) / 32768f;
+                                }
+                                short sample = (short)Math.Max(-32768, Math.Min(32767, (int)Math.Round(sum / channels * 32767f)));
+                                buffer[i * 2] = (byte)(sample & 0xFF);
+                                buffer[i * 2 + 1] = (byte)((sample >> 8) & 0xFF);
+                            }
+                            file.Write(buffer, 0, buffer.Length);
+                            System.Threading.Interlocked.Add(ref _bytes, buffer.Length);
+                        }
+                        capture.ReleaseBuffer(frames);
+                    }
+                    file.Flush();
+                }
+                client.Stop();
+            }
+            catch
+            {
+                // 기본 장치가 사라지면 조용히 멈춘다. 다음 세션에서 다시 시작한다.
+            }
+            finally
+            {
+                _running = false;
+                try { if (file != null) file.Dispose(); } catch { }
+                try { if (capture != null) Marshal.ReleaseComObject(capture); } catch { }
+                try { if (format != IntPtr.Zero) Marshal.FreeCoTaskMem(format); } catch { }
+                try { if (client != null) Marshal.ReleaseComObject(client); } catch { }
+            }
+        }
+    }
+
     }
 
     internal static class Program
@@ -526,6 +708,13 @@ namespace NotchAudio
                     return "";
                 case "device":
                     return DevicePayload(Audio.DefaultDeviceId());
+                case "pcm.begin":
+                    if (parts.Length <= 2) throw new ArgumentException("missing path");
+                    return "rate=" + Audio.BeginCapture(parts[2]);
+                case "pcm.stop":
+                    return "bytes=" + Audio.EndCapture().ToString(CultureInfo.InvariantCulture);
+                case "pcm.status":
+                    return "bytes=" + Audio.CaptureBytes().ToString(CultureInfo.InvariantCulture);
                 case "ping":
                     return "pong";
                 case "quit":

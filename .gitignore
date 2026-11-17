@@ -17,5 +17,8 @@ native/*.node
 
 # 오디오 사이드카 빌드 산출물
 native/audio/bin/
+
+# 강제 정렬 스파이크용 모델/샘플(수백 MB, 커밋 금지)
+.notch-align/
 .discord-secret
 .discord-secret.txt

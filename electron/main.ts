@@ -4,6 +4,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { createAudioBridge, type AudioBridge, type AudioDevice } from "./audio-bridge";
 import { createDiscordBridge, type DiscordBridge, type DiscordVoice } from "./discord-bridge";
+import { CtcAligner } from "./align";
+import { createLyricsSync } from "./lyrics-sync";
 import { linkDiscord } from "./discord-auth";
 import { readDiscordConfig } from "./discord-config";
 
@@ -452,6 +454,61 @@ ipcMain.handle("notch:audio-device", async (): Promise<AudioDevice | null> => {
   return audioDevice;
 });
 
+// 가사 정렬기와 그 세션. 모델은 사용자 데이터 폴더에 있고, 없으면 LRCLIB 가사로 남는다.
+let aligner: CtcAligner | null = null;
+let lyricsSync: ReturnType<typeof createLyricsSync> | null = null;
+
+function getAligner(): CtcAligner {
+  // 실행 방식(개발 하니스/패키지)에 따라 userData 이름이 달라지므로 Discord 설정과 같이 appData/Notch를 쓴다.
+  if (!aligner) aligner = new CtcAligner(path.join(app.getPath("appData"), "Notch", "models"));
+  return aligner;
+}
+
+function getLyricsSync(): ReturnType<typeof createLyricsSync> {
+  if (!lyricsSync) {
+    lyricsSync = createLyricsSync({
+      bridge: getAudioBridge,
+      aligner: getAligner(),
+      tempDir: app.getPath("temp"),
+      emit: (event) => {
+        for (const win of BrowserWindow.getAllWindows()) win.webContents.send("notch:align", event);
+      },
+    });
+  }
+  return lyricsSync;
+}
+
+ipcMain.handle("notch:align-start", async (_event, request: unknown): Promise<boolean> => {
+  if (typeof request !== "object" || request === null) return false;
+  const { key, lines, lang, position } = request as {
+    key?: unknown;
+    lines?: unknown;
+    lang?: unknown;
+    position?: unknown;
+  };
+  if (typeof key !== "string" || !Array.isArray(lines)) return false;
+  if (lang !== "ko" && lang !== "en") return false;
+  const seeds = lines.flatMap((line) => {
+    if (typeof line !== "object" || line === null) return [];
+    const { text, time } = line as { text?: unknown; time?: unknown };
+    if (typeof text !== "string" || !text.trim()) return [];
+    return [typeof time === "number" && Number.isFinite(time) ? { text, time } : { text }];
+  });
+  if (seeds.length === 0) return false;
+  const at = typeof position === "number" && Number.isFinite(position) ? position : 0;
+  return getLyricsSync().start({ key, lines: seeds, lang, position: at });
+});
+
+ipcMain.handle("notch:align-stop", (): boolean => {
+  getLyricsSync().stop();
+  return true;
+});
+
+ipcMain.handle("notch:align-position", (_event, seconds: unknown): boolean => {
+  if (typeof seconds === "number" && Number.isFinite(seconds)) getLyricsSync().position(seconds);
+  return true;
+});
+
 interface MediaSessionRow {
   app: string;
   status: string;
@@ -487,6 +544,36 @@ let trackTransition: { app: string; title: string; excluded: Set<string>; expire
 function holdTrackTransition(app: string, title: string) {
   const excluded = new Set(lastSnapshots.keys());
   return { app, title, excluded, expiresAt: Date.now() + TRACK_TRANSITION_MS };
+}
+
+// 브라우저는 재생 중에도 타임라인 표본을 거의 갱신하지 않는다(Brave는 수 분간 같은 값).
+// 표본을 그대로 쓰면 멈춘 위치가 계속 보이므로, 마지막 표본 위에 실제 경과 시간을 더해 시계를 만든다.
+let mediaClock: { key: string; position: number; at: number; playing: boolean; sampleAt: number } | null = null;
+
+function advanceMediaClock(row: MediaSessionRow): { position: number; updatedAt: number } {
+  const now = Date.now();
+  const key = sessionKey(row);
+  const playing = row.status === "Playing";
+  const prev = mediaClock && mediaClock.key === key ? mediaClock : null;
+  const sampleLag = row.updatedAt > 0 ? Math.max(0, (now - row.updatedAt) / 1000) : 0;
+  let position: number;
+  if (!prev) {
+    position = row.position + (playing ? sampleLag : 0);
+  } else {
+    position = prev.position + (prev.playing ? (now - prev.at) / 1000 : 0);
+    // 표본이 새로 들어왔을 때만 믿는다. 같은 표본을 반복해서 받으면 시계를 흔들지 않는다.
+    const fresh = row.updatedAt > 0 && row.updatedAt > prev.sampleAt + 400;
+    if (fresh) {
+      const candidate = row.position + (playing ? sampleLag : 0);
+      // 탐색처럼 크게 어긋날 때만 시계를 다시 맞춘다.
+      if (Math.abs(candidate - position) > 2) position = candidate;
+    }
+  }
+  if (row.duration > 0) position = Math.min(position, row.duration);
+  position = Math.max(0, position);
+  mediaClock = { key, position, at: now, playing, sampleAt: Math.max(row.updatedAt, prev?.sampleAt ?? 0) };
+  // 렌더러가 (position + 지난 시간)으로 이어 붙이도록 기준 시각을 지금으로 준다.
+  return { position, updatedAt: now };
 }
 
 // 재생 중이라고 주장해도 타임라인이 멈춰 있으면 실제로는 멈춘 세션이다(브라우저 탭이 흔하다).
@@ -586,7 +673,17 @@ ipcMain.handle("notch:media", async (): Promise<MediaInfo> => {
     const sources: MediaSource[] = [...rows]
       .sort((a, b) => Number(b.status === "Playing") - Number(a.status === "Playing") || b.updatedAt - a.updatedAt)
       .map((row) => ({ id: sessionKey(row), app: row.app, title: row.title, artist: row.artist, status: row.status }));
-    const media = { ...EMPTY_MEDIA, ...pick, id: sessionKey(pick), active: true, thumbnail, sources };
+    const clock = advanceMediaClock(pick);
+    const media = {
+      ...EMPTY_MEDIA,
+      ...pick,
+      id: sessionKey(pick),
+      active: true,
+      position: clock.position,
+      updatedAt: clock.updatedAt,
+      thumbnail,
+      sources,
+    };
     if (readId !== mediaReadId) return lastShownMedia ?? media;
     lastShownSession = sessionKey(pick);
     lastShownMedia = media;

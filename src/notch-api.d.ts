@@ -92,6 +92,15 @@ interface Window {
     onToggle: (callback: () => void) => () => void;
     getMedia: () => Promise<NotchMedia>;
     getYoutubeThumb: (track: string, artist: string) => Promise<string>;
+    alignStart: (request: {
+      key: string;
+      lines: { text: string; time?: number }[];
+      lang: "ko" | "en";
+      position: number;
+    }) => Promise<boolean>;
+    alignStop: () => Promise<boolean>;
+    alignPosition: (seconds: number) => Promise<boolean>;
+    onAlign: (callback: (event: { key: string; state: "working" | "ready" | "failed"; lines: { time: number; text: string }[] }) => void) => () => void;
     getWeather: () => Promise<{ tempC: number; kind: string; city: string } | null>;
     controlMedia: (action: "Play" | "Pause" | "Previous" | "Next", target?: { app?: string; title?: string }) => Promise<boolean>;
     selectMedia: (id: string) => Promise<boolean>;

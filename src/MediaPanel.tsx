@@ -107,6 +107,9 @@ export function MediaPanel({ shownTitle, hasMedia, media, metaAlbum, livePositio
           </div>
         ) : lyrics.state === "ready" ? (
           <div className="notch-lyrics">{lyrics.text}</div>
+        ) : lyrics.state === "off" ? (
+          // 영상 재생이라 가사를 일부러 띄우지 않는 경우. 안내 문구도 두지 않는다.
+          null
         ) : stillThumb ? (
           <div className="notch-art-still">
             <img className="notch-art-still-img" src={ytThumb} alt="" />
