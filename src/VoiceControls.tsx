@@ -203,7 +203,7 @@ export function VoicePanel({
                 className={`notch-voice-row${member.speaking ? " is-speaking" : ""}`}
               >
                 <span className="notch-voice-name">
-                  {member.self ? `${member.name} (나)` : member.name}
+                  {member.self && member.name.trim() !== "나" ? `${member.name} (나)` : member.name}
                 </span>
                 {rowDeafened ? (
                   <HeadphoneOff className="notch-voice-flag" aria-label="헤드셋 꺼짐" size={16} />

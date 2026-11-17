@@ -1,5 +1,5 @@
-import { Volume2, VolumeX } from "lucide-react";
-import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { SlidersHorizontal, Volume, Volume1, Volume2, VolumeX } from "lucide-react";
+import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 
 // 미디어 키·다른 앱의 볼륨 변경도 놓치지 않을 만큼 짧게 확인한다.
 const VOLUME_POLL_MS = 300;
@@ -7,7 +7,7 @@ const VOLUME_POLL_MS = 300;
 
 
 // 시스템 마스터 볼륨. 부드러운 프로그래스 바 대신, 눈금 셀 사다리·커서·반전 플레이트로 값을 읽는 계기판.
-export function VolumeDeck({ active, onOpenMixer }: { active: boolean; onOpenMixer?: () => void }) {
+export function VolumeDeck({ active, onOpenMixer, children, tools }: { active: boolean; onOpenMixer?: () => void; children?: ReactNode; tools?: ReactNode }) {
   const [volume, setVolume] = useState<NotchVolume | null>(null);
   const [dragging, setDragging] = useState(false);
   const [hover, setHover] = useState<number | null>(null);
@@ -180,32 +180,48 @@ export function VolumeDeck({ active, onOpenMixer }: { active: boolean; onOpenMix
 
   const level = volume?.level ?? 0;
   const muted = volume?.muted ?? false;
+  const VolumeIcon = muted ? VolumeX : level === 0 ? Volume : level <= 50 ? Volume1 : Volume2;
   // 마우스로 훑는 동안에는 실제 값과 목표 값 사이를 미리 보여준다.
   const preview = !dragging && hover !== null && volume !== null && hover !== level ? hover : null;
   const readout = volume === null ? "–" : String(preview ?? level);
+  const muteButton = (
+    <button
+      type="button"
+      className={`notch-vol-mute${muted ? " is-on" : ""}`}
+      aria-pressed={muted}
+      aria-label={muted ? "음소거 해제" : "음소거"}
+      title={muted ? "음소거 해제 (M)" : "음소거 (M)"}
+      disabled={volume === null}
+      onClick={(event) => {
+        event.stopPropagation();
+        toggleMute();
+      }}
+    >
+      <VolumeIcon size={18} strokeWidth={1.75} />
+    </button>
+  );
+  const mixerButton = onOpenMixer ? (
+    <button
+      type="button"
+      className="notch-vol-label"
+      title="앱별 볼륨 열기"
+      aria-label="앱별 볼륨 열기"
+      onClick={(event) => {
+        event.stopPropagation();
+        onOpenMixer();
+      }}
+    >
+      <SlidersHorizontal size={18} strokeWidth={1.75} />
+    </button>
+  ) : null;
 
   return (
     <div
-      className={`notch-vol${muted ? " is-muted" : ""}${dragging ? " is-live" : ""}${volume === null ? " is-off" : ""}`}
+      className={`notch-vol${children ? " has-controls" : ""}${muted ? " is-muted" : ""}${dragging ? " is-live" : ""}${volume === null ? " is-off" : ""}`}
       onClick={(event) => event.stopPropagation()}
     >
-      {/* 라벨이 곧 앱별 볼륨으로 들어가는 문이다(눌러서 열고, 끄는 건 레일에서). */}
-      {onOpenMixer ? (
-        <button
-          type="button"
-          className="notch-vol-label"
-          title="앱별 볼륨 열기"
-          aria-label="앱별 볼륨 열기"
-          onClick={(event) => {
-            event.stopPropagation();
-            onOpenMixer();
-          }}
-        >
-          <Volume2 size={18} strokeWidth={1.75} />
-        </button>
-      ) : (
-        <Volume2 size={18} strokeWidth={1.75} aria-hidden="true" />
-      )}
+      <span className="notch-vol-main">
+      {muteButton}
       <span
         ref={trackRef}
         className="notch-vol-track"
@@ -236,20 +252,10 @@ export function VolumeDeck({ active, onOpenMixer }: { active: boolean; onOpenMix
       <span className={`notch-vol-value${muted ? " is-muted" : ""}${preview !== null ? " is-target" : ""}`}>
         {(dragging || preview !== null) && readout}
       </span>
-      <button
-        type="button"
-        className={`notch-vol-mute${muted ? " is-on" : ""}`}
-        aria-pressed={muted}
-        aria-label={muted ? "음소거 해제" : "음소거"}
-        title={muted ? "음소거 해제 (M)" : "음소거 (M)"}
-        disabled={volume === null}
-        onClick={(event) => {
-          event.stopPropagation();
-          toggleMute();
-        }}
-      >
-        {muted ? <VolumeX size={18} strokeWidth={1.75} /> : <Volume2 size={18} strokeWidth={1.75} />}
-      </button>
+      {tools}
+      </span>
+      {children}
+      {mixerButton}
     </div>
   );
 }
@@ -342,13 +348,6 @@ function MixRow({
       onClick={(event) => event.stopPropagation()}
     >
       <span className="notch-mix-name" title={label}>{label}</span>
-      {peak === undefined ? null : (
-        <span
-          className="notch-mix-peak"
-          aria-hidden="true"
-          style={{ width: `${Math.round(Math.max(0, Math.min(1, peak)) * 100)}%` }}
-        />
-      )}
       <span
         ref={trackRef}
         className="notch-vol-track notch-mix-track"
@@ -369,6 +368,7 @@ function MixRow({
       >
         <span className="notch-vol-rail" aria-hidden="true" />
         <span className="notch-vol-fill" aria-hidden="true" style={{ width: `${level}%` }} />
+        {peak !== undefined && <span className="notch-mix-peak" aria-hidden="true" style={{ width: `${Math.round(Math.max(0, Math.min(1, peak)) * 100)}%` }} />}
         <span className="notch-vol-cursor" aria-hidden="true" style={{ left: `${level}%` }} />
       </span>
       <span className={`notch-vol-value${muted ? " is-muted" : ""}`}>
@@ -397,10 +397,11 @@ const MIX_POLL_MS = 800;
 const PEAK_POLL_MS = 120;
 
 // 앱별 볼륨 화면. 기본 출력 장치에서 실제로 소리를 내는 세션만 보여준다.
-export function SoundMixer({ active, onClose }: { active: boolean; onClose: () => void }) {
+export function SoundMixer({ active, onClose, onRowCount }: { active: boolean; onClose: () => void; onRowCount: (count: number) => void }) {
   const [apps, setApps] = useState<NotchAudioApp[]>([]);
   const [master, setMaster] = useState<NotchVolume | null>(null);
   const [device, setDevice] = useState("");
+  useEffect(() => { onRowCount(Math.max(2, apps.length + 1)); }, [apps.length, onRowCount]);
   // pid별로 다듬은 피크 값. 사이드카는 순간값만 주므로 여기서 조금씩 놓아준다.
   const [peaks, setPeaks] = useState<Record<number, number>>({});
   // 끌고 있는 동안 폴링 결과가 손가락 위치를 덮지 않게 한다.

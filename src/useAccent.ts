@@ -25,19 +25,23 @@ function readableColor(image: HTMLImageElement): string {
       bucket.b += b;
       buckets.set(key, bucket);
     }
-    const dominant = [...buckets.values()].sort((a, b) => b.count - a.count)[0];
-    if (!dominant) return FALLBACK;
-    const rgb = [dominant.r, dominant.g, dominant.b].map((v) => v / dominant.count);
-    const luminance = (values: number[]) => {
-      const linear = values.map((v) => {
-        const c = v / 255;
-        return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-      });
-      return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+    const toHsl = (bucket: { count: number; r: number; g: number; b: number }) => {
+      const [r, g, b] = [bucket.r, bucket.g, bucket.b].map((v) => v / bucket.count / 255);
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      const delta = max - min;
+      const lightness = (max + min) / 2;
+      const saturation = delta === 0 ? 0 : delta / (1 - Math.abs(2 * lightness - 1));
+      const hue = delta === 0 ? 0 : max === r ? ((g - b) / delta + 6) % 6 : max === g ? (b - r) / delta + 2 : (r - g) / delta + 4;
+      return { hue: hue * 60, saturation, lightness };
     };
-    let mix = 0;
-    while (luminance(rgb.map((v) => v + (255 - v) * mix)) < 0.175 && mix < 1) mix += 0.01;
-    return `#${rgb.map((v) => Math.round(v + (255 - v) * mix).toString(16).padStart(2, "0")).join("")}`;
+    const candidates = [...buckets.values()].map((bucket) => ({ bucket, ...toHsl(bucket) }));
+    const saturated = candidates.filter((candidate) => candidate.saturation >= 0.45);
+    const dominant = (saturated.length ? saturated : candidates).sort((a, b) => b.bucket.count - a.bucket.count)[0];
+    if (!dominant) return FALLBACK;
+    const saturation = Math.max(0.45, dominant.saturation);
+    const lightness = Math.min(0.8, Math.max(0.72, dominant.lightness));
+    return `hsl(${dominant.hue.toFixed(1)} ${(saturation * 100).toFixed(1)}% ${(lightness * 100).toFixed(1)}%)`;
   } catch {
     return FALLBACK;
   }

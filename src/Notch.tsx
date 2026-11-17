@@ -10,7 +10,7 @@ import { fetchLyrics, type Lyrics } from "./lyrics";
 import { cleanTitle, trackName, artistName, displayArtist } from "./mediaText";
 import { SoundMixer } from "./AudioControls";
 import { DiscordLink, MicStatus, VoiceNow, VoicePanel } from "./VoiceControls";
-import { BatteryLow, Music, Settings2, Zap } from "lucide-react";
+import { BatteryLow, Music, Settings2, Volume2, Zap } from "lucide-react";
 import { useAccent } from "./useAccent";
 import { HudPanel } from "./HudPanel";
 import { MediaPanel } from "./MediaPanel";
@@ -58,6 +58,55 @@ const EMPTY_MEDIA: NotchMedia = {
 };
 
 const PROGRESS_TICK_MS = 250;
+
+type BoundsRect = { x: number; y: number; width: number; height: number };
+
+// 개발 모드 전용: 전환 프레임마다 노치가 마지막으로 보낸 setShape 사각형 안에 있는지 검사한다.
+function startBoundsAudit(notch: HTMLElement, area: () => BoundsRect | null) {
+  let frame = 0;
+  let frames = 0;
+  let violations = 0;
+  let maxOverflow = 0;
+  let finished = false;
+  let settle = 2;
+  const sample = () => {
+    const rect = notch.getBoundingClientRect();
+    const sent = area();
+    if (sent) {
+      frames += 1;
+      const overflow = Math.max(
+        0,
+        sent.x - rect.left,
+        rect.right - (sent.x + sent.width),
+        sent.y - rect.top,
+        rect.bottom - (sent.y + sent.height),
+      );
+      if (overflow > 0.5) {
+        violations += 1;
+        maxOverflow = Math.max(maxOverflow, overflow);
+      }
+    }
+    if (finished && settle-- <= 0) {
+      const result = { frames, violations, maxOverflow: Number(maxOverflow.toFixed(2)) };
+      const scope = window as Window & { __notchBoundsChecks?: typeof result[] };
+      (scope.__notchBoundsChecks ??= []).push(result);
+      console.info(`[notch] 전환 잘림 검사 프레임=${frames} 벗어남=${violations} 최대초과=${result.maxOverflow}px`);
+      return;
+    }
+    frame = window.requestAnimationFrame(sample);
+  };
+  frame = window.requestAnimationFrame(sample);
+  return {
+    finish() {
+      finished = true;
+    },
+    stop() {
+      finished = true;
+      settle = -1;
+      window.cancelAnimationFrame(frame);
+    },
+  };
+}
 
 type NotchView = "media" | "hud";
 
@@ -315,6 +364,9 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
   const [weather, setWeather] = useState<{ tempC: number; kind: string; city: string } | null>(null);
   // 앱별 볼륨 화면. 펼친 패널 내용만 바꾸고, 접으면 닫힌다.
   const [mixOpen, setMixOpen] = useState(false);
+  const [mixRowCount, setMixRowCount] = useState(2);
+  const [linkHeight, setLinkHeight] = useState(180);
+  const linkRef = useRef<HTMLDivElement>(null);
   // 디스코드 전용 화면.
   const [voiceOpen, setVoiceOpen] = useState(false);
   // 트레이에서 연 연결 화면.
@@ -497,7 +549,8 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
   const activeLineTime = hasSynced ? lyrics.synced[activeLine]?.time ?? 0 : 0;
   const nextLineTime = hasSynced ? lyrics.synced[activeLine + 1]?.time : undefined;
   const lineEndTime = nextLineTime ?? (media.duration > activeLineTime ? media.duration : activeLineTime + 4);
-  const lineSpan = Math.min(12, Math.max(0.6, lineEndTime - activeLineTime));
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const lineSpan = Math.min(reduceMotion ? 24 : 12, Math.max(0.6, (lineEndTime - activeLineTime) * (reduceMotion ? 2 : 1)));
   // 이미 줄 중간이면 그만큼 앞선 지점에서 시작해 빛과 가사가 어긋나지 않게 한다.
   const lineElapsed = Math.min(lineSpan, Math.max(0, livePosition - activeLineTime));
   const shineProgress = lineSpan > 0 ? Math.min(1, Math.max(0, lineElapsed / lineSpan)) : 1;
@@ -506,7 +559,35 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
   // 접힌 가사에도 같은 빛살을 흘린다. 빈 줄(간주)에서는 이전 가사가 남아 있으므로 빛은 두지 않는다.
   const collapsedShine = hasSynced && !!lyrics.synced[activeLine]?.text && !!collapsedLyric;
 
-  // 펼친 화면: 가장 긴 가사 줄이 두 줄로 접히지 않을 만큼만 넓힌다(좌우 여백 56 + 여유).
+  // 화면 변경은 이전 내용을 먼저 지우고 새 내용을 나타낸다.
+  const panelScreen = linkOpen ? "link" : voiceOpen && voiceActive && voice ? "voice" : mixOpen ? "mix" : view;
+  const [displayScreen, setDisplayScreen] = useState(panelScreen);
+  const [previousHeight, setPreviousHeight] = useState(0);
+  const [contentLeaving, setContentLeaving] = useState(false);
+  useEffect(() => {
+    if (panelScreen === displayScreen) {
+      setContentLeaving(false);
+      return;
+    }
+    setContentLeaving(true);
+    const timer = window.setTimeout(() => {
+      setDisplayScreen(panelScreen);
+      setContentLeaving(false);
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [panelScreen, displayScreen]);
+
+  useLayoutEffect(() => {
+    const element = linkRef.current;
+    if (!element || displayScreen !== "link") return;
+    const update = () => setLinkHeight(Math.ceil(element.scrollHeight));
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    update();
+    return () => observer.disconnect();
+  }, [displayScreen]);
+
+  // 폭 측정자는 패널의 움직이는 폭과 독립된 고유 너비를 쓴다.
   useEffect(() => {
     if (!expanded || view !== "media" || !hasSynced || !widestLyric) {
       setExpandedWidth(null);
@@ -518,52 +599,97 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
     const update = () => {
       if (cancelled) return;
       // 미디어 패널과 좌우 여백을 포함한 폭. 가사가 길면 여기서 늘어난다.
-      setExpandedWidth(Math.min(860, Math.max(EXPANDED_WIDTH, Math.ceil(measure.offsetWidth + 56))));
+      setExpandedWidth(Math.min(860, Math.max(EXPANDED_WIDTH, Math.ceil(measure.offsetWidth + 40))));
     };
     update();
     void document.fonts.ready.then(update);
     return () => {
       cancelled = true;
     };
-  }, [expanded, view, hasSynced, widestLyric]);
+  }, [expanded, view, hasSynced, widestLyric, displayScreen]);
 
-  // HUD는 미디어 가사 폭을 물려받지 않고 기본 폭으로 돌아온다.
+  // 렌더링, CSS 크기와 Windows shape가 같은 화면 우선순위를 공유한다.
   const notchWidth = expanded
-    ? mixOpen || voiceOpen || linkOpen
-      ? EXPANDED_WIDTH
-      : view === "media" && hasSynced && widestLyric
-        ? expandedWidth ?? EXPANDED_WIDTH
-        : view === "media"
-          ? EXPANDED_WIDTH
-          : HUD_WIDTH
+    ? panelScreen === "media" && hasSynced && widestLyric
+      ? expandedWidth ?? EXPANDED_WIDTH
+      : panelScreen === "hud" ? HUD_WIDTH : EXPANDED_WIDTH
     : view === "media" ? 440 : null;
 
-  // 전환 중에는 그리기와 입력이 모두 제한되는 Windows shape를 넉넉하게 유지한다.
+  const mediaHeight = deviceNote ? 288 : 248;
+  const mixHeight = Math.min(320, 108 + Math.max(2, mixRowCount) * 44 + (deviceNote ? 40 : 0));
+  const voiceHeight = Math.min(320, 108 + Math.max(1, voice?.members.length ?? 0) * 38 + (deviceNote ? 40 : 0));
+  const desiredHeight = !expanded ? 40 : panelScreen === "mix" ? mixHeight : panelScreen === "voice" ? voiceHeight : panelScreen === "link" ? Math.min(320, Math.max(160, linkHeight + 40 + (deviceNote ? 40 : 0))) : panelScreen === "hud" ? 176 : mediaHeight;
+  const targetHeight = expanded && contentLeaving ? Math.max(desiredHeight, previousHeight) : desiredHeight;
+  useLayoutEffect(() => {
+    if (!contentLeaving) setPreviousHeight(desiredHeight);
+  }, [contentLeaving, desiredHeight]);
+  // 전환 중 shape는 현재·목표 사각형과 오버슈트를 덮고, 끝난 뒤에만 줄인다.
+  const boundsRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
+  const movingRef = useRef(false);
   useLayoutEffect(() => {
     const notch = notchRef.current;
-    if (!notch || !window.notchApi) return;
+    const api = window.notchApi;
+    if (!notch || !api) return;
+    const send = (bounds: { x: number; y: number; width: number; height: number }) => {
+      boundsRef.current = bounds;
+      api.setNotchBounds(bounds);
+    };
     const current = notch.getBoundingClientRect();
     const width = notchWidth ?? 154;
-    const height = expanded ? (view === "hud" && !mixOpen && !voiceOpen && !linkOpen ? 272 : 320) : 40;
     const targetLeft = (window.innerWidth - width) / 2;
+    const prior = boundsRef.current;
     const left = Math.min(current.left, targetLeft) - 8;
     const right = Math.max(current.right, targetLeft + width) + 8;
-    const bottom = Math.max(current.bottom, current.top + height) + 8;
-    window.notchApi.setNotchBounds({ x: left, y: current.top, width: right - left, height: bottom - current.top });
-
+    const bottom = Math.max(current.bottom, current.top + targetHeight) + 8;
+    if (!prior || targetLeft < prior.x - 0.5 || targetLeft + width > prior.x + prior.width + 0.5 || current.top + targetHeight > prior.y + prior.height + 0.5) {
+      send({ x: Math.min(left, prior?.x ?? left), y: current.top, width: Math.max(right, prior ? prior.x + prior.width : right) - Math.min(left, prior?.x ?? left), height: Math.max(bottom, prior ? prior.y + prior.height : bottom) - current.top });
+    }
+    movingRef.current = true;
+    const audit = import.meta.env.DEV ? startBoundsAudit(notch, () => boundsRef.current) : null;
     let timer: number;
-    const scheduleCorrection = () => {
+    let frame: number;
+    const finish = () => {
+      if (!movingRef.current) return;
+      movingRef.current = false;
       window.clearTimeout(timer);
-      timer = window.setTimeout(() => {
-        const { x, y, width: finalWidth, height: finalHeight } = notch.getBoundingClientRect();
-        window.notchApi?.setNotchBounds({ x, y, width: finalWidth, height: finalHeight });
-      }, 400);
+      const { x, y, width: finalWidth, height: finalHeight } = notch.getBoundingClientRect();
+      send({ x, y, width: finalWidth, height: finalHeight });
+      audit?.finish();
     };
-    const observer = new ResizeObserver(scheduleCorrection);
+    const onEnd = (event: TransitionEvent) => {
+      if (event.target !== notch || !["width", "height"].includes(event.propertyName)) return;
+      frame = window.requestAnimationFrame(() => {
+        const changing = notch.getAnimations().some((animation) => animation instanceof CSSTransition && ["width", "height"].includes(animation.transitionProperty) && animation.playState === "running");
+        if (!changing) finish();
+      });
+    };
+    notch.addEventListener("transitionend", onEnd);
+    timer = window.setTimeout(finish, 450);
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) frame = window.requestAnimationFrame(finish);
+    return () => {
+      window.clearTimeout(timer);
+      window.cancelAnimationFrame(frame);
+      audit?.stop();
+      notch.removeEventListener("transitionend", onEnd);
+    };
+  }, [notchWidth, targetHeight]);
+
+  // CSS 전환이 없는 외부 크기 변경만 보정한다. 전환 프레임에서는 IPC를 보내지 않는다.
+  useEffect(() => {
+    const notch = notchRef.current;
+    if (!notch) return;
+    const observer = new ResizeObserver(() => {
+      if (movingRef.current) return;
+      const { x, y, width, height } = notch.getBoundingClientRect();
+      const previous = boundsRef.current;
+      if (previous && Math.abs(previous.x - x) < 0.5 && Math.abs(previous.y - y) < 0.5 && Math.abs(previous.width - width) < 0.5 && Math.abs(previous.height - height) < 0.5) return;
+      const bounds = { x, y, width, height };
+      boundsRef.current = bounds;
+      window.notchApi?.setNotchBounds(bounds);
+    });
     observer.observe(notch);
-    scheduleCorrection();
-    return () => { window.clearTimeout(timer); observer.disconnect(); };
-  }, [expanded, notchWidth, view, mixOpen, voiceOpen, linkOpen]);
+    return () => observer.disconnect();
+  }, []);
 
   const showArt = lyrics.state === "missing" || lyrics.state === "instrumental" || lyrics.state === "idle";
   const lyricsText =
@@ -580,9 +706,10 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
       ref={notchRef}
       role="button"
       tabIndex={0}
-      className={`notch ${expanded ? "is-expanded" : "is-collapsed"}${view === "media" ? " has-media" : ""}${view === "hud" && !mixOpen && !voiceOpen && !linkOpen ? " has-hud" : ""}${mixOpen ? " has-mix" : ""}${media.status === "Playing" ? " is-playing" : ""}${!expanded && collapsedBadge ? " has-status" : ""}${showMic ? " has-voice" : ""}`}
+      className={`notch ${expanded ? "is-expanded" : "is-collapsed"}${view === "media" ? " has-media" : ""}${panelScreen === "media" ? " has-media-screen" : ""}${panelScreen === "hud" ? " has-hud" : ""}${panelScreen === "mix" ? " has-mix" : ""}${media.status === "Playing" ? " is-playing" : ""}${!expanded && collapsedBadge ? " has-status" : ""}${showMic ? " has-voice" : ""}`}
       style={{
-        ...(notchWidth ? { width: `${notchWidth}px` } : {}),
+        width: `${notchWidth ?? 154}px`,
+        height: `${targetHeight}px`,
         "--notch-accent": accent,
       } as CSSProperties}
       onClick={(event) => {
@@ -625,8 +752,8 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
           <MicStatus voice={voice} onToggle={toggleVoice} />
         </>
       )}
-      {collapsedBadge && <span className={`notch-status${lowBattery ? " is-low" : ""}`}>
-        {collapsedBadge === "bolt" ? <Zap aria-label="충전 중" /> : lowBattery ? <BatteryLow aria-label="배터리 부족" /> : <Settings2 aria-label="출력 장치 변경" />}
+      {collapsedBadge && <span className={`notch-status${lowBattery ? " is-low" : ""}${collapsedBadge === "bolt" ? " is-charging" : ""}`}>
+        {collapsedBadge === "bolt" ? <Zap aria-label="충전 중" /> : lowBattery ? <BatteryLow aria-label="배터리 부족" /> : <Volume2 aria-label="출력 장치 변경" />}
         {battery?.hasBattery && (battery.charging || lowBattery) ? `${battery.percent}%` : null}
       </span>}
       {/* 접힌 동안 패널 안의 버튼이 탭으로 잡히지 않게 inert를 준다. */}
@@ -647,17 +774,19 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
               </button>
             </span>
           )}
-          {linkOpen ? (
-            <DiscordLink onClose={() => setLinkOpen(false)} />
-          ) : voiceOpen && voiceActive && voice ? (
+          <div className={`notch-screen${contentLeaving ? " is-leaving" : ""}`} key={displayScreen}>
+          {displayScreen === "link" ? (
+            <div ref={linkRef} className="notch-link-measure"><DiscordLink onClose={() => setLinkOpen(false)} /></div>
+          ) : displayScreen === "voice" && voice ? (
             <VoicePanel voice={voice} onClose={() => setVoiceOpen(false)} onToggle={toggleVoice} />
-          ) : mixOpen ? (
-            <SoundMixer active={expanded} onClose={() => setMixOpen(false)} />
-          ) : view === "hud" ? (
+          ) : displayScreen === "mix" ? (
+            <SoundMixer active={expanded} onClose={() => setMixOpen(false)} onRowCount={setMixRowCount} />
+          ) : displayScreen === "hud" ? (
           <HudPanel hudHm={hudHm} hudSec={hudSec} hudDay={hudDay} weather={weather} tempHot={tempHot} hudTempLabel={hudTempLabel} hudTemp={hudTemp} hudGpu={hudGpu} expanded={expanded} openMix={openMix} voiceActive={voiceActive} voice={voice} openVoice={openVoice} toggleVoice={toggleVoice} />
         ) : (
           <MediaPanel shownTitle={shownTitle} hasMedia={hasMedia} media={media} metaAlbum={metaAlbum} livePosition={livePosition} progress={progress} sourceChips={sourceChips} playPending={playPending} selectSource={selectSource} hasSynced={hasSynced} activeLine={activeLine} lyrics={lyrics} shinePosition={shinePosition} showArt={showArt} ytThumb={ytThumb} lyricsText={lyricsText} lineMeasureRef={lineMeasureRef} widestLyric={widestLyric} voiceActive={voiceActive} voice={voice} openVoice={openVoice} toggleVoice={toggleVoice} control={control} expanded={expanded} openMix={openMix} />
         )}
+          </div>
         </div>
       </div>
     </div>

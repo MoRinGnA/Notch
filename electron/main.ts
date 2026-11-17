@@ -880,11 +880,11 @@ ipcMain.on("notch:bounds", (event, bounds: { x: number; y: number; width: number
   const bottom = Math.min(windowHeight, Math.ceil(bounds.y + bounds.height));
   if (right <= left || bottom <= top) return;
 
-  const radius = Math.min(16, Math.floor((right - left) / 2), bottom - top);
+  const radius = Math.min(20, Math.floor((right - left) / 2), bottom - top);
   const shape = [{ x: left, y: top, width: right - left, height: bottom - top - radius }];
   // 노치 위쪽의 작은 곡면도 잘리지 않게 포함한다.
-  if (left > 0) shape.push({ x: Math.max(0, left - 8), y: top, width: Math.min(8, left), height: Math.min(8, bottom - top) });
-  if (right < windowWidth) shape.push({ x: right, y: top, width: Math.min(8, windowWidth - right), height: Math.min(8, bottom - top) });
+  if (left > 0) shape.push({ x: Math.max(0, left - 14), y: top, width: Math.min(14, left), height: Math.min(14, bottom - top) });
+  if (right < windowWidth) shape.push({ x: right, y: top, width: Math.min(14, windowWidth - right), height: Math.min(14, bottom - top) });
   for (let row = 0; row < radius; row++) {
     const dy = row + 0.5;
     const inset = Math.floor(radius - Math.sqrt(radius * radius - dy * dy));

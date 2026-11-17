@@ -6,6 +6,12 @@
   font-display: swap;
 }
 
+@property --notch-fillet {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 8px;
+}
+
 @property --notch-accent {
   syntax: "<color>";
   inherits: true;
@@ -15,7 +21,8 @@
 :root {
   --notch-bg: #000000;
   --notch-tile: #141416;
-  --notch-tile-high: #1f1f23;
+  --notch-tile-high: #3a3a40;
+  --notch-slider-track: #3a3a40;
   --notch-line: #2c2c31;
   --notch-text: #f4f4f6;
   --notch-text-dim: #8c8c93;
@@ -24,6 +31,8 @@
   --notch-mute: #f43f5e;
   --notch-warn: #f59e0b;
   --notch-collapsed-w: 440px;
+  /* scripts/notch-spring.mjs: ζ=0.83, ω=21, 350ms. */
+  --notch-spring: linear(0 0%, 0.05506 5%, 0.17945 10%, 0.32907 15%, 0.47743 20%, 0.61029 25%, 0.72144 30%, 0.80967 35%, 0.87664 40%, 0.92536 45%, 0.95929 50%, 0.9818 55%, 0.99585 60%, 1.00389 65%, 1.00788 70%, 1.00925 75%, 1.00908 80%, 1.00807 85%, 1.00672 90%, 1.00531 95%, 1 100%);
   color-scheme: dark;
   font-family: "Pretendard Variable", Pretendard, "Segoe UI Variable Text", "Segoe UI", "Malgun Gothic", system-ui, sans-serif;
   background: transparent;
@@ -64,17 +73,13 @@ body,
   border-radius: 0;
   /* 폭·높이는 넘침 없이 부드럽게 자리 잡아 접힘의 실루엣을 유지한다. */
   interpolate-size: allow-keywords;
-  transition:
-    width 0.35s linear(0, 0.1298 10%, 0.3713 20%, 0.6001 30%, 0.7733 40%, 0.8875 50%, 0.9546 60%, 0.9894 70%, 1.0045 80%, 1.0091 90%, 1 100%),
-    max-width 0.35s linear(0, 0.1298 10%, 0.3713 20%, 0.6001 30%, 0.7733 40%, 0.8875 50%, 0.9546 60%, 0.9894 70%, 1.0045 80%, 1.0091 90%, 1 100%),
-    height 0.35s linear(0, 0.1298 10%, 0.3713 20%, 0.6001 30%, 0.7733 40%, 0.8875 50%, 0.9546 60%, 0.9894 70%, 1.0045 80%, 1.0091 90%, 1 100%);
+  --notch-fillet: 8px;
+  transition: width 350ms var(--notch-spring), height 350ms var(--notch-spring), border-radius 350ms var(--notch-spring), --notch-fillet 350ms var(--notch-spring);
 }
 
 /* 접힘에도 같은 감쇠 곡선을 사용한다. */
 .notch.is-collapsed {
-  transition-duration: 0.35s;
-  transition-timing-function: linear(0, 0.1298 10%, 0.3713 20%, 0.6001 30%, 0.7733 40%, 0.8875 50%, 0.9546 60%, 0.9894 70%, 1.0045 80%, 1.0091 90%, 1 100%);
-  transition-delay: 0s;
+  --notch-fillet: 8px;
 }
 
 /* 검정 본체: 아래 모서리만 둥글고, 위 모서리는 바깥으로 휘어 상단에 이어짐.
@@ -95,8 +100,8 @@ body,
   content: "";
   position: absolute;
   top: 0;
-  width: 8px;
-  height: 8px;
+  width: var(--notch-fillet);
+  height: var(--notch-fillet);
 }
 
 .notch-body::before {
@@ -248,9 +253,10 @@ body,
 .notch:not(.is-playing) .notch-now .notch-eq { display: flex; }
 .notch:not(.is-playing) .notch-now .notch-eq i { animation-play-state: paused; }
 .notch-now .notch-eq i { background: var(--notch-text-dim); }
+/* 배지 폭(아이콘 16 + 간격 + 퍼센트)과 오른쪽 여백을 합친 만큼 비워 두어 EQ가 배지에 붙지 않게 한다. */
 .notch.is-collapsed.has-voice .notch-now { padding-right: 34px; }
-.notch.is-collapsed.has-status .notch-now { padding-right: 40px; }
-.notch.is-collapsed.has-voice.has-status .notch-now { padding-right: 75px; }
+.notch.is-collapsed.has-status .notch-now { padding-right: 52px; }
+.notch.is-collapsed.has-voice.has-status .notch-now { padding-right: 88px; }
 .notch.is-collapsed .notch-status { display: flex; align-items: center; gap: 3px; color: var(--notch-ok); background: none; }
 .notch.is-collapsed .notch-status.is-low { color: var(--notch-warn); }
 .notch-status svg { width: 14px; height: 14px; stroke-width: 1.75; }
@@ -334,7 +340,7 @@ body,
 /* 양 끝에서 잠시 멈추며 전체 제목을 천천히 보여준다. */
 .notch.is-collapsed .notch-now-title .notch-title-text.is-overflowing,
 .notch.is-expanded .notch-info-title .notch-title-text.is-overflowing {
-  animation: notch-title-scroll var(--title-duration) linear infinite;
+  animation: none;
 }
 
 @keyframes notch-title-scroll {
@@ -1850,7 +1856,7 @@ body,
 
   .notch-line-shine,
   .notch-now-shine {
-    display: none;
+    transition: mask-position 700ms linear, -webkit-mask-position 700ms linear;
   }
 
   .notch-scan::before {
@@ -1872,5 +1878,6 @@ body,
   .notch.is-expanded .notch-scan {
     transition: none;
   }
+  .notch-panel, .notch.is-expanded .notch-panel { transition: opacity 120ms linear; transform: none; }
 }
 

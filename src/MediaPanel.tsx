@@ -53,10 +53,20 @@ function ScrollingTitle({ text, className }: { text: string; className: string }
 
 
 export function MediaPanel({ shownTitle, hasMedia, media, metaAlbum, livePosition, progress, sourceChips, playPending, selectSource, hasSynced, activeLine, lyrics, shinePosition, showArt, ytThumb, lyricsText, lineMeasureRef, widestLyric, voiceActive, voice, openVoice, toggleVoice, control, expanded, openMix }: { shownTitle: string; hasMedia: boolean; media: NotchMedia; metaAlbum: string; livePosition: number; progress: number; sourceChips: (NotchMediaSource & { label: string })[]; playPending: boolean; selectSource: (id: string) => void; hasSynced: boolean; activeLine: number; lyrics: Lyrics; shinePosition: string; showArt: boolean; ytThumb: string; lyricsText: string; lineMeasureRef: RefObject<HTMLSpanElement | null>; widestLyric: string; voiceActive: boolean; voice: NotchVoice | null; openVoice: () => void; toggleVoice: (patch: { mute?: boolean; deaf?: boolean }) => void; control: (action: "Play" | "Previous" | "Next") => (event: MouseEvent) => void; expanded: boolean; openMix: () => void }) {
+  // 가사 줄이 비어 있던 자리는 상태 문구로 채운다. 유튜브 썸네일이 있으면 그 분기를 먼저 쓴다.
+  const stillThumb = showArt && !hasSynced && !!ytThumb;
+  const lyricNote =
+    lyrics.state === "loading"
+      ? "가사를 불러오는 중..."
+      : lyrics.state === "instrumental"
+        ? "연주곡입니다."
+        : lyrics.state === "missing"
+          ? "가사를 찾지 못했어요"
+          : "";
   return (
           <>
-        <div className="notch-tile notch-info">
-          {media.thumbnail || ytThumb ? <img className="notch-cover" src={media.thumbnail || ytThumb} alt="" /> : <Music className="notch-cover" aria-hidden="true" strokeWidth={1.75} />}
+        <div className="notch-info">
+          {media.thumbnail || ytThumb ? <img className={`notch-cover${stillThumb ? " is-hidden" : ""}`} src={media.thumbnail || ytThumb} alt="" /> : <Music className={`notch-cover${stillThumb ? " is-hidden" : ""}`} aria-hidden="true" strokeWidth={1.75} />}
           <span className="notch-meta">
             <ScrollingTitle text={shownTitle} className="notch-info-title" />
             {displayArtist(media.artist) && <span className="notch-info-meta">{displayArtist(media.artist)}</span>}
@@ -80,7 +90,7 @@ export function MediaPanel({ shownTitle, hasMedia, media, metaAlbum, livePositio
           </div>
         )}
         </div>
-        <div className="notch-tile notch-lyrics-tile">
+        <div className={`notch-lyrics-tile${lyrics.state === "ready" && !hasSynced ? " is-plain" : ""}${stillThumb ? " is-art" : ""}`}>
         {hasSynced ? (
           <div className="notch-lyrics notch-lyrics-synced">
             <div key={activeLine} className="notch-line is-active">
@@ -95,30 +105,26 @@ export function MediaPanel({ shownTitle, hasMedia, media, metaAlbum, livePositio
               </span>
             </div>
           </div>
-        ) : showArt && ytThumb ? (
+        ) : lyrics.state === "ready" ? (
+          <div className="notch-lyrics">{lyrics.text}</div>
+        ) : stillThumb ? (
           <div className="notch-art-still">
             <img className="notch-art-still-img" src={ytThumb} alt="" />
           </div>
-        ) : showArt && media.thumbnail ? (
-          <div className="notch-art">
-            <img className="notch-art-img" src={media.thumbnail} alt="" />
-            {lyricsText ? <span className="notch-art-note">{lyricsText}</span> : null}
-          </div>
         ) : (
-          <div className="notch-lyrics">{lyricsText}</div>
+          <p className="notch-lyrics-note">{lyricNote}</p>
         )}
         </div>
         {hasSynced && (
           <span ref={lineMeasureRef} className="notch-line-measure" aria-hidden="true">{widestLyric}</span>
         )}
-        <div className="notch-tile notch-player">
+        <div className="notch-player">
           <div className="notch-progress">
             <span className="notch-time">{hasMedia ? clock(livePosition) : "–"}</span>
             <span className="notch-seg" aria-label="재생 진행률"><span className="notch-seg-fill" style={{ transform: `scaleX(${progress})` }} /><span className="notch-seg-head" style={{ left: `${progress * 100}%` }} /></span>
             <span className="notch-time">{hasMedia ? clock(media.duration) : "–"}</span>
           </div>
-        <div className="notch-controls">
-          <span className="notch-controls-tools">
+        <VolumeDeck active={expanded} onOpenMixer={openMix} tools={<span className="notch-controls-tools">
           {voiceActive && voice && (
             <>
               <button
@@ -136,20 +142,19 @@ export function MediaPanel({ shownTitle, hasMedia, media, metaAlbum, livePositio
               <MicStatus voice={voice} inline onToggle={toggleVoice} />
             </>
           )}
-          </span>
+          </span>}>
           <span className="notch-controls-group">
             <button type="button" className="notch-btn" onClick={control("Previous")} disabled={playPending || !media.canPrev} aria-label="이전">
               <SkipBack size={18} strokeWidth={1.75} />
             </button>
-            <button type="button" className="notch-btn" onClick={control("Play")} disabled={playPending || !media.canPlayPause} aria-label={media.status === "Playing" ? "일시정지" : "재생"}>
+            <button type="button" className="notch-btn notch-play" onClick={control("Play")} disabled={playPending || !media.canPlayPause} aria-label={media.status === "Playing" ? "일시정지" : "재생"}>
               {media.status === "Playing" ? <Pause size={18} strokeWidth={1.75} /> : <Play size={18} strokeWidth={1.75} />}
             </button>
             <button type="button" className="notch-btn" onClick={control("Next")} disabled={playPending || !media.canNext} aria-label="다음">
               <SkipForward size={18} strokeWidth={1.75} />
             </button>
           </span>
-          <VolumeDeck active={expanded} onOpenMixer={openMix} />
-        </div>
+        </VolumeDeck>
         </div>
           </>
   );

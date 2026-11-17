@@ -8,17 +8,19 @@ export function HudPanel({ hudHm, hudSec, hudDay, weather, tempHot, hudTempLabel
   return (
     <div className="notch-hud">
       <div className="notch-hud-grid">
-        <div className="notch-tile notch-hud-time">
-          <span className="notch-hud-clock">{hudHm}<span className="notch-hud-sec">:{hudSec}</span></span>
-          <span className="notch-hud-date">{hudDay}</span>
-          {weather && <span className="notch-hud-weather" title={weather.city}><WeatherIcon size={18} strokeWidth={1.75} aria-hidden="true" /> {weather.tempC}° {weather.city}</span>}
+        <div className="notch-hud-time">
+          <span className="notch-hud-clock-group">
+            <span className="notch-hud-clock">{hudHm}<span className="notch-hud-sec">:{hudSec}</span></span>
+            <span className="notch-hud-date">{hudDay}</span>
+            {weather && <span className="notch-hud-weather" title={weather.city}><WeatherIcon size={18} strokeWidth={1.75} aria-hidden="true" /> {weather.tempC}° {weather.city}</span>}
+          </span>
         </div>
-        <div className="notch-tile notch-hud-reads">
+        <div className="notch-hud-reads">
           <span className="notch-hud-read"><span className="notch-hud-label">{hudTempLabel}</span><span className="notch-hud-value">{hudTemp}<span className="notch-hud-unit">°C</span>{tempHot && <span className="notch-warning" aria-label="온도 높음" />}</span></span>
           <span className="notch-hud-read"><span className="notch-hud-label">GPU</span><span className="notch-hud-value">{hudGpu}<span className="notch-hud-unit">%</span></span></span>
         </div>
       </div>
-      <div className="notch-tile notch-hud-volume">
+      <div className="notch-hud-volume">
         <VolumeDeck active={expanded} onOpenMixer={openMix} />
         {voiceActive && voice && <span className="notch-hud-foot"><button type="button" className="notch-tool-label" title="디스코드 음성 열기" aria-label="디스코드 음성 열기" onClick={(event) => { event.stopPropagation(); openVoice(); }}>음성</button><MicStatus voice={voice} inline onToggle={toggleVoice} /></span>}
       </div>
