@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 contextBridge.exposeInMainWorld("notchApi", {
-  setNotchBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
+  setNotchBounds: (bounds: { x: number; y: number; width: number; height: number; radius?: number }) =>
     ipcRenderer.send("notch:bounds", bounds),
   getTemp: () =>
     ipcRenderer.invoke("notch:temp") as Promise<{ value: number; source: "cpu" | "acpi" } | null>,
@@ -39,30 +39,6 @@ contextBridge.exposeInMainWorld("notchApi", {
   },
   getYoutubeThumb: (track: string, artist: string) =>
     ipcRenderer.invoke("notch:youtube-thumb", { track, artist }) as Promise<string>,
-  // 싱크 가사가 없는 곡을 지금 재생 중인 소리로 정렬한다.
-  alignStart: (request: {
-    key: string;
-    lines: { text: string; time?: number }[];
-    lang: "ko" | "en";
-    position: number;
-  }) =>
-    ipcRenderer.invoke("notch:align-start", request) as Promise<boolean>,
-  alignStop: () => ipcRenderer.invoke("notch:align-stop") as Promise<boolean>,
-  alignPosition: (seconds: number) => ipcRenderer.invoke("notch:align-position", seconds) as Promise<boolean>,
-  onAlign: (
-    callback: (event: {
-      key: string;
-      state: "working" | "ready" | "failed";
-      lines: { time: number; text: string }[];
-    }) => void,
-  ) => {
-    const listener = (
-      _event: Electron.IpcRendererEvent,
-      payload: { key: string; state: "working" | "ready" | "failed"; lines: { time: number; text: string }[] },
-    ) => callback(payload);
-    ipcRenderer.on("notch:align", listener);
-    return () => ipcRenderer.removeListener("notch:align", listener);
-  },
   getWeather: () => ipcRenderer.invoke("notch:weather") as Promise<{ tempC: number; kind: string; city: string } | null>,
   controlMedia: (action: "Play" | "Pause" | "Previous" | "Next", target?: { app?: string; title?: string }) =>
     ipcRenderer.invoke("notch:media-control", { action, ...target }) as Promise<boolean>,

@@ -22,6 +22,8 @@ interface NotchMedia {
   position: number;
   duration: number;
   updatedAt: number;
+  // 앱을 켜서 첫 표본이 낡았으면 새 표본이 올 때까지 false.
+  positionKnown: boolean;
 }
 
 interface NotchBattery {
@@ -82,7 +84,7 @@ interface NotchSettings {
 
 interface Window {
   notchApi?: {
-    setNotchBounds: (bounds: { x: number; y: number; width: number; height: number }) => void;
+    setNotchBounds: (bounds: { x: number; y: number; width: number; height: number; radius?: number }) => void;
     getSettings: () => Promise<NotchSettings>;
     onSettings: (callback: (settings: NotchSettings) => void) => () => void;
     getTemp: () => Promise<{ value: number; source: "cpu" | "acpi" } | null>;
@@ -92,15 +94,6 @@ interface Window {
     onToggle: (callback: () => void) => () => void;
     getMedia: () => Promise<NotchMedia>;
     getYoutubeThumb: (track: string, artist: string) => Promise<string>;
-    alignStart: (request: {
-      key: string;
-      lines: { text: string; time?: number }[];
-      lang: "ko" | "en";
-      position: number;
-    }) => Promise<boolean>;
-    alignStop: () => Promise<boolean>;
-    alignPosition: (seconds: number) => Promise<boolean>;
-    onAlign: (callback: (event: { key: string; state: "working" | "ready" | "failed"; lines: { time: number; text: string }[] }) => void) => () => void;
     getWeather: () => Promise<{ tempC: number; kind: string; city: string } | null>;
     controlMedia: (action: "Play" | "Pause" | "Previous" | "Next", target?: { app?: string; title?: string }) => Promise<boolean>;
     selectMedia: (id: string) => Promise<boolean>;

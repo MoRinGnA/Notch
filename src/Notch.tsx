@@ -43,6 +43,7 @@ const EMPTY_MEDIA: NotchMedia = {
   active: false,
   id: "",
   sources: [],
+  positionKnown: true,
   status: "",
   title: "",
   artist: "",
@@ -238,8 +239,10 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
     const id = window.setInterval(() => setNow(Date.now()), PROGRESS_TICK_MS);
     return () => window.clearInterval(id);
   }, [media.active, media.status]);
+  // 앱을 켠 순간 이미 낡은 표본이면 그사이 멈춘 시간을 알 수 없다. 새 표본이 올 때까지는 위치를 확정하지 않는다.
+  const timeKnown = !media.active || media.positionKnown !== false;
   // Windows는 재생 중 위치를 바꾸지 않고 LastUpdatedTime만 기록하므로, 그 시점부터 경과 시간을 더한다.
-  const elapsed = media.status === "Playing" && media.updatedAt > 0 ? (now - media.updatedAt) / 1000 : 0;
+  const elapsed = timeKnown && media.status === "Playing" && media.updatedAt > 0 ? (now - media.updatedAt) / 1000 : 0;
   const livePosition = Math.min(media.duration, media.position + Math.max(0, elapsed));
 
   const mediaKey = `${media.title}|${media.artist}|${media.album}`;
@@ -517,7 +520,7 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
   // 음성 채널에 있을 때는 오른쪽 자리를 마이크 표시에 내준다.
   const voiceActive = !!voice?.inChannel;
   const showMic = !expanded && voiceActive;
-  const progress = media.duration > 0 ? Math.min(1, Math.max(0, livePosition / media.duration)) : 0;
+  const progress = timeKnown && media.duration > 0 ? Math.min(1, Math.max(0, livePosition / media.duration)) : 0;
   const hudDate = new Date(hudNow);
   const pad2 = (value: number) => String(value).padStart(2, "0");
   // 초는 따로 떼어 어둡게, 숫자는 세 칸 고정폭으로 흔들리지 않게.
@@ -532,7 +535,8 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
   // 제목과 같은 앨범은 중복이라 메타 줄에서 뺀다.
   const metaAlbum =
     media.album && media.album !== media.title && media.album !== shownTitle ? media.album : "";
-  const hasSynced = lyrics.state === "ready" && lyrics.synced.length > 0;
+  // 위치가 확정되지 않았으면 줄 강조를 끄고 가사 전문만 보준다(잘못된 줄을 짚지 않도록).
+  const hasSynced = lyrics.state === "ready" && lyrics.synced.length > 0 && timeKnown;
   // 현재 재생 시각에 해당하는 줄의 인덱스(마지막으로 시작한 줄).
   let activeLine = -1;
   if (hasSynced) {
@@ -640,7 +644,9 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
     if (!notch || !api) return;
     const send = (bounds: { x: number; y: number; width: number; height: number }) => {
       boundsRef.current = bounds;
-      api.setNotchBounds(bounds);
+      // 지금 그려지는 아래 모서리 곡률을 같이 보낸다. 창 마스크가 이보다 작아야 CSS 곡선이 실루엣이 된다.
+      const radius = Number.parseFloat(getComputedStyle(notch).borderBottomLeftRadius) || 0;
+      api.setNotchBounds({ ...bounds, radius });
     };
     const current = notch.getBoundingClientRect();
     const width = notchWidth ?? 154;
@@ -792,7 +798,7 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
           ) : displayScreen === "hud" ? (
           <HudPanel hudHm={hudHm} hudSec={hudSec} hudDay={hudDay} weather={weather} tempHot={tempHot} hudTempLabel={hudTempLabel} hudTemp={hudTemp} hudGpu={hudGpu} expanded={expanded} openMix={openMix} voiceActive={voiceActive} voice={voice} openVoice={openVoice} toggleVoice={toggleVoice} />
         ) : (
-          <MediaPanel shownTitle={shownTitle} hasMedia={hasMedia} media={media} metaAlbum={metaAlbum} livePosition={livePosition} progress={progress} sourceChips={sourceChips} playPending={playPending} selectSource={selectSource} hasSynced={hasSynced} activeLine={activeLine} lyrics={lyrics} shinePosition={shinePosition} showArt={showArt} ytThumb={ytThumb} lyricsText={lyricsText} lineMeasureRef={lineMeasureRef} widestLyric={widestLyric} voiceActive={voiceActive} voice={voice} openVoice={openVoice} toggleVoice={toggleVoice} control={control} expanded={expanded} openMix={openMix} />
+          <MediaPanel shownTitle={shownTitle} hasMedia={hasMedia} media={media} metaAlbum={metaAlbum} livePosition={livePosition} progress={progress} timeKnown={timeKnown} sourceChips={sourceChips} playPending={playPending} selectSource={selectSource} hasSynced={hasSynced} activeLine={activeLine} lyrics={lyrics} shinePosition={shinePosition} showArt={showArt} ytThumb={ytThumb} lyricsText={lyricsText} lineMeasureRef={lineMeasureRef} widestLyric={widestLyric} voiceActive={voiceActive} voice={voice} openVoice={openVoice} toggleVoice={toggleVoice} control={control} expanded={expanded} openMix={openMix} />
         )}
           </div>
         </div>

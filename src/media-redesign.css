@@ -4,10 +4,10 @@
   box-shadow: none;
 }
 .notch.has-media.is-expanded .notch-body::before {
-  background: radial-gradient(circle at 0 100%, transparent 7.5px, var(--notch-bg) 8px);
+  background: radial-gradient(circle at 0 100%, transparent calc(var(--notch-fillet) - 0.5px), var(--notch-bg) var(--notch-fillet));
 }
 .notch.has-media.is-expanded .notch-body::after {
-  background: radial-gradient(circle at 100% 100%, transparent 7.5px, var(--notch-bg) 8px);
+  background: radial-gradient(circle at 100% 100%, transparent calc(var(--notch-fillet) - 0.5px), var(--notch-bg) var(--notch-fillet));
 }
 .notch.has-media .notch-panel {
   inset: 20px;
@@ -63,8 +63,8 @@
 /* HUD는 시각/날씨, 시스템 판독, 볼륨의 세 타일을 사용한다. */
 .notch.has-hud.is-expanded { height: 176px; }
 .notch.has-hud .notch-body { background: var(--notch-bg); box-shadow: none; }
-.notch.has-hud .notch-body::before { background: radial-gradient(circle at 0 100%, transparent 7.5px, var(--notch-bg) 8px); }
-.notch.has-hud .notch-body::after { background: radial-gradient(circle at 100% 100%, transparent 7.5px, var(--notch-bg) 8px); }
+.notch.has-hud .notch-body::before { background: radial-gradient(circle at 0 100%, transparent calc(var(--notch-fillet) - 0.5px), var(--notch-bg) var(--notch-fillet)); }
+.notch.has-hud .notch-body::after { background: radial-gradient(circle at 100% 100%, transparent calc(var(--notch-fillet) - 0.5px), var(--notch-bg) var(--notch-fillet)); }
 .notch.has-hud .notch-panel { inset: 20px; color: var(--notch-text); font-family: "Pretendard Variable", Pretendard, "Segoe UI Variable Text", "Segoe UI", "Malgun Gothic", system-ui, sans-serif; }
 .notch-hud { gap: 16px; justify-content: center; font-family: inherit; color: var(--notch-text); }
 .notch-hud-grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 24px; flex: 1; min-height: 0; }
@@ -111,9 +111,9 @@
 
 /* 모든 펼친 화면에서 본체는 불투명한 검정이며 타일만 밝힌다. */
 .notch.is-expanded .notch-body { background: var(--notch-bg); box-shadow: none; }
-.notch.is-expanded .notch-body::before { background: radial-gradient(circle at 0 100%, transparent 7.5px, var(--notch-bg) 8px); }
-.notch.is-expanded .notch-body::after { background: radial-gradient(circle at 100% 100%, transparent 7.5px, var(--notch-bg) 8px); }
-.notch.is-expanded { height: 320px; border-radius: 0 0 28px 28px; }
+.notch.is-expanded .notch-body::before { background: radial-gradient(circle at 0 100%, transparent calc(var(--notch-fillet) - 0.5px), var(--notch-bg) var(--notch-fillet)); }
+.notch.is-expanded .notch-body::after { background: radial-gradient(circle at 100% 100%, transparent calc(var(--notch-fillet) - 0.5px), var(--notch-bg) var(--notch-fillet)); }
+.notch.is-expanded { height: 320px; border-radius: 0 0 16px 16px; }
 .notch.has-hud.is-expanded { height: 176px; }
 .notch.is-expanded .notch-panel { inset: 20px; font-family: "Pretendard Variable", Pretendard, "Segoe UI Variable Text", "Segoe UI", "Malgun Gothic", system-ui, sans-serif; color: var(--notch-text); }
 .notch-main { gap: 8px; min-height: 0; }
@@ -142,7 +142,7 @@
 .notch-now-lyric-line { animation: notch-lyric-fade 120ms ease-out both; }
 @keyframes notch-lyric-fade { from { opacity: 0; } to { opacity: 1; } }
 .notch .notch-hud-volume .notch-vol { width: auto; }
-.notch.is-collapsed { width: 154px; padding: 0; border-radius: 0 0 20px 20px; }
+.notch.is-collapsed { width: 154px; padding: 0; border-radius: 0 0 16px 16px; }
 .notch.is-collapsed.has-media { padding: 0 16px; }
 .notch.is-collapsed.has-media .notch-now { box-sizing: border-box; }
 /* 접힌 알약의 오른쪽 표시는 배지·마이크 모두 같은 16px 광학 크기를 쓴다. */
@@ -183,9 +183,6 @@
 .notch .notch-now { filter: blur(0); transition: opacity 160ms ease-out, filter 160ms ease-out; }
 .notch.is-expanded .notch-now { filter: blur(8px); transition: opacity 120ms ease-in, filter 120ms ease-in; }
 .notch.is-expanded { --notch-fillet: 12px; }
-.notch-body::before, .notch-body::after { background: var(--notch-bg) !important; }
-.notch-body::before { -webkit-mask: radial-gradient(circle at 0 100%, transparent calc(100% - 0.5px), #000 100%); mask: radial-gradient(circle at 0 100%, transparent calc(100% - 0.5px), #000 100%); }
-.notch-body::after { -webkit-mask: radial-gradient(circle at 100% 100%, transparent calc(100% - 0.5px), #000 100%); mask: radial-gradient(circle at 100% 100%, transparent calc(100% - 0.5px), #000 100%); }
 .notch-screen { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; animation: notch-content-in 160ms ease-out both; }
 .notch-screen.is-leaving { pointer-events: none; animation: notch-content-out 120ms ease-in both; }
 .notch-link-measure { width: 100%; min-width: 0; align-self: flex-start; }

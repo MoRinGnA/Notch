@@ -52,7 +52,7 @@ function ScrollingTitle({ text, className }: { text: string; className: string }
 }
 
 
-export function MediaPanel({ shownTitle, hasMedia, media, metaAlbum, livePosition, progress, sourceChips, playPending, selectSource, hasSynced, activeLine, lyrics, shinePosition, showArt, ytThumb, lyricsText, lineMeasureRef, widestLyric, voiceActive, voice, openVoice, toggleVoice, control, expanded, openMix }: { shownTitle: string; hasMedia: boolean; media: NotchMedia; metaAlbum: string; livePosition: number; progress: number; sourceChips: (NotchMediaSource & { label: string })[]; playPending: boolean; selectSource: (id: string) => void; hasSynced: boolean; activeLine: number; lyrics: Lyrics; shinePosition: string; showArt: boolean; ytThumb: string; lyricsText: string; lineMeasureRef: RefObject<HTMLSpanElement | null>; widestLyric: string; voiceActive: boolean; voice: NotchVoice | null; openVoice: () => void; toggleVoice: (patch: { mute?: boolean; deaf?: boolean }) => void; control: (action: "Play" | "Previous" | "Next") => (event: MouseEvent) => void; expanded: boolean; openMix: () => void }) {
+export function MediaPanel({ shownTitle, hasMedia, media, metaAlbum, livePosition, progress, timeKnown, sourceChips, playPending, selectSource, hasSynced, activeLine, lyrics, shinePosition, showArt, ytThumb, lyricsText, lineMeasureRef, widestLyric, voiceActive, voice, openVoice, toggleVoice, control, expanded, openMix }: { shownTitle: string; hasMedia: boolean; media: NotchMedia; metaAlbum: string; livePosition: number; progress: number; timeKnown: boolean; sourceChips: (NotchMediaSource & { label: string })[]; playPending: boolean; selectSource: (id: string) => void; hasSynced: boolean; activeLine: number; lyrics: Lyrics; shinePosition: string; showArt: boolean; ytThumb: string; lyricsText: string; lineMeasureRef: RefObject<HTMLSpanElement | null>; widestLyric: string; voiceActive: boolean; voice: NotchVoice | null; openVoice: () => void; toggleVoice: (patch: { mute?: boolean; deaf?: boolean }) => void; control: (action: "Play" | "Previous" | "Next") => (event: MouseEvent) => void; expanded: boolean; openMix: () => void }) {
   // 가사 줄이 비어 있던 자리는 상태 문구로 채운다. 유튜브 썸네일이 있으면 그 분기를 먼저 쓴다.
   const stillThumb = showArt && !hasSynced && !!ytThumb;
   const lyricNote =
@@ -123,7 +123,7 @@ export function MediaPanel({ shownTitle, hasMedia, media, metaAlbum, livePositio
         )}
         <div className="notch-player">
           <div className="notch-progress">
-            <span className="notch-time">{hasMedia ? clock(livePosition) : "–"}</span>
+            <span className="notch-time">{hasMedia && timeKnown ? clock(livePosition) : "–"}</span>
             <span className="notch-seg" aria-label="재생 진행률"><span className="notch-seg-fill" style={{ transform: `scaleX(${progress})` }} /><span className="notch-seg-head" style={{ left: `${progress * 100}%` }} /></span>
             <span className="notch-time">{hasMedia ? clock(media.duration) : "–"}</span>
           </div>

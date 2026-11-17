@@ -4,8 +4,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { createAudioBridge, type AudioBridge, type AudioDevice } from "./audio-bridge";
 import { createDiscordBridge, type DiscordBridge, type DiscordVoice } from "./discord-bridge";
-import { CtcAligner } from "./align";
-import { createLyricsSync } from "./lyrics-sync";
 import { linkDiscord } from "./discord-auth";
 import { readDiscordConfig } from "./discord-config";
 
@@ -132,6 +130,8 @@ interface MediaInfo {
   position: number;
   duration: number;
   updatedAt: number;
+  // 재생 위치를 믿을 수 있는지. 앱을 켠 순간 표본이 낡았으면 새 표본이 올 때까지 false.
+  positionKnown: boolean;
 }
 
 const EMPTY_MEDIA: MediaInfo = {
@@ -150,6 +150,7 @@ const EMPTY_MEDIA: MediaInfo = {
   position: 0,
   duration: 0,
   updatedAt: 0,
+  positionKnown: true,
 };
 
 // Windows GSMTC(미디어 세션) 조회 스크립트. 재생 중 세션을 우선한다.
@@ -454,61 +455,6 @@ ipcMain.handle("notch:audio-device", async (): Promise<AudioDevice | null> => {
   return audioDevice;
 });
 
-// 가사 정렬기와 그 세션. 모델은 사용자 데이터 폴더에 있고, 없으면 LRCLIB 가사로 남는다.
-let aligner: CtcAligner | null = null;
-let lyricsSync: ReturnType<typeof createLyricsSync> | null = null;
-
-function getAligner(): CtcAligner {
-  // 실행 방식(개발 하니스/패키지)에 따라 userData 이름이 달라지므로 Discord 설정과 같이 appData/Notch를 쓴다.
-  if (!aligner) aligner = new CtcAligner(path.join(app.getPath("appData"), "Notch", "models"));
-  return aligner;
-}
-
-function getLyricsSync(): ReturnType<typeof createLyricsSync> {
-  if (!lyricsSync) {
-    lyricsSync = createLyricsSync({
-      bridge: getAudioBridge,
-      aligner: getAligner(),
-      tempDir: app.getPath("temp"),
-      emit: (event) => {
-        for (const win of BrowserWindow.getAllWindows()) win.webContents.send("notch:align", event);
-      },
-    });
-  }
-  return lyricsSync;
-}
-
-ipcMain.handle("notch:align-start", async (_event, request: unknown): Promise<boolean> => {
-  if (typeof request !== "object" || request === null) return false;
-  const { key, lines, lang, position } = request as {
-    key?: unknown;
-    lines?: unknown;
-    lang?: unknown;
-    position?: unknown;
-  };
-  if (typeof key !== "string" || !Array.isArray(lines)) return false;
-  if (lang !== "ko" && lang !== "en") return false;
-  const seeds = lines.flatMap((line) => {
-    if (typeof line !== "object" || line === null) return [];
-    const { text, time } = line as { text?: unknown; time?: unknown };
-    if (typeof text !== "string" || !text.trim()) return [];
-    return [typeof time === "number" && Number.isFinite(time) ? { text, time } : { text }];
-  });
-  if (seeds.length === 0) return false;
-  const at = typeof position === "number" && Number.isFinite(position) ? position : 0;
-  return getLyricsSync().start({ key, lines: seeds, lang, position: at });
-});
-
-ipcMain.handle("notch:align-stop", (): boolean => {
-  getLyricsSync().stop();
-  return true;
-});
-
-ipcMain.handle("notch:align-position", (_event, seconds: unknown): boolean => {
-  if (typeof seconds === "number" && Number.isFinite(seconds)) getLyricsSync().position(seconds);
-  return true;
-});
-
 interface MediaSessionRow {
   app: string;
   status: string;
@@ -521,6 +467,8 @@ interface MediaSessionRow {
   position: number;
   duration: number;
   updatedAt: number;
+  // 재생 위치를 믿을 수 있는지. 앱을 켠 순간 표본이 낡았으면 새 표본이 올 때까지 false.
+  positionKnown: boolean;
 }
 
 // 브라우저는 영상 이미지 대신 앱 아이콘을 썸네일로 내보낼 수 있다.
@@ -548,32 +496,42 @@ function holdTrackTransition(app: string, title: string) {
 
 // 브라우저는 재생 중에도 타임라인 표본을 거의 갱신하지 않는다(Brave는 수 분간 같은 값).
 // 표본을 그대로 쓰면 멈춘 위치가 계속 보이므로, 마지막 표본 위에 실제 경과 시간을 더해 시계를 만든다.
-let mediaClock: { key: string; position: number; at: number; playing: boolean; sampleAt: number } | null = null;
+let mediaClock: { key: string; position: number; at: number; playing: boolean; sampleAt: number; known: boolean } | null = null;
+// 표본이 이만큼 낡았으면 그 사이 재생이 멈춰 있었을 수 있다.
+const SAMPLE_TRUST_MS = 4000;
 
-function advanceMediaClock(row: MediaSessionRow): { position: number; updatedAt: number } {
+function advanceMediaClock(row: MediaSessionRow): { position: number; updatedAt: number; positionKnown: boolean } {
   const now = Date.now();
   const key = sessionKey(row);
   const playing = row.status === "Playing";
   const prev = mediaClock && mediaClock.key === key ? mediaClock : null;
   const sampleLag = row.updatedAt > 0 ? Math.max(0, (now - row.updatedAt) / 1000) : 0;
   let position: number;
+  let known: boolean;
   if (!prev) {
-    position = row.position + (playing ? sampleLag : 0);
+    // 앱을 켠 시점. 표본이 방금 것이면 그대로 믿고, 오래됐으면 그 사이 멈춰 있었는지 알 수 없다.
+    known = !playing || row.updatedAt === 0 || now - row.updatedAt <= SAMPLE_TRUST_MS;
+    position = known ? row.position + (playing ? sampleLag : 0) : row.position;
   } else {
     position = prev.position + (prev.playing ? (now - prev.at) / 1000 : 0);
     // 표본이 새로 들어왔을 때만 믿는다. 같은 표본을 반복해서 받으면 시계를 흔들지 않는다.
     const fresh = row.updatedAt > 0 && row.updatedAt > prev.sampleAt + 400;
+    known = prev.known;
     if (fresh) {
       const candidate = row.position + (playing ? sampleLag : 0);
-      // 탐색처럼 크게 어긋날 때만 시계를 다시 맞춘다.
-      if (Math.abs(candidate - position) > 2) position = candidate;
+      // 탐색이었거나 아직 확정하지 못한 위치면 새 표본을 그대로 따른다.
+      if (!known || Math.abs(candidate - position) > 2) position = candidate;
+      known = true;
+    } else if (!known) {
+      // 확정 전에는 낡은 표본 위에 시간을 더하지 않는다. 그새 어긋난 채로 흘러가면 안 된다.
+      position = row.position;
     }
   }
   if (row.duration > 0) position = Math.min(position, row.duration);
   position = Math.max(0, position);
-  mediaClock = { key, position, at: now, playing, sampleAt: Math.max(row.updatedAt, prev?.sampleAt ?? 0) };
+  mediaClock = { key, position, at: now, playing, sampleAt: Math.max(row.updatedAt, prev?.sampleAt ?? 0), known };
   // 렌더러가 (position + 지난 시간)으로 이어 붙이도록 기준 시각을 지금으로 준다.
-  return { position, updatedAt: now };
+  return { position, updatedAt: now, positionKnown: known };
 }
 
 // 재생 중이라고 주장해도 타임라인이 멈춰 있으면 실제로는 멈춘 세션이다(브라우저 탭이 흔하다).
@@ -681,6 +639,7 @@ ipcMain.handle("notch:media", async (): Promise<MediaInfo> => {
       active: true,
       position: clock.position,
       updatedAt: clock.updatedAt,
+      positionKnown: clock.positionKnown,
       thumbnail,
       sources,
     };
@@ -964,7 +923,7 @@ function closeDiscordLink(): void {
 }
 
 // 투명한 창 바깥 부분은 클릭을 뒤쪽 창으로 통과시킨다.
-ipcMain.on("notch:bounds", (event, bounds: { x: number; y: number; width: number; height: number }) => {
+ipcMain.on("notch:bounds", (event, bounds: { x: number; y: number; width: number; height: number; radius?: number }) => {
   if (process.platform !== "win32" || !bounds ||
       ![bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite) ||
       bounds.width <= 0 || bounds.height <= 0) return;
@@ -977,15 +936,20 @@ ipcMain.on("notch:bounds", (event, bounds: { x: number; y: number; width: number
   const bottom = Math.min(windowHeight, Math.ceil(bounds.y + bounds.height));
   if (right <= left || bottom <= top) return;
 
-  const radius = Math.min(20, Math.floor((right - left) / 2), bottom - top);
+  // 마스크는 화면이 그리는 곡선보다 2px 작게 자른다. 같거나 크면 1px 단위 톱니가 실루엣이 된다.
+  const painted = Number.isFinite(bounds.radius) ? Number(bounds.radius) : 16;
+  const radius = Math.max(0, Math.min(28, Math.floor(painted), Math.floor((right - left) / 2), bottom - top) - 2);
   const shape = [{ x: left, y: top, width: right - left, height: bottom - top - radius }];
-  // 노치 위쪽의 작은 곡면도 잘리지 않게 포함한다.
-  if (left > 0) shape.push({ x: Math.max(0, left - 14), y: top, width: Math.min(14, left), height: Math.min(14, bottom - top) });
-  if (right < windowWidth) shape.push({ x: right, y: top, width: Math.min(14, windowWidth - right), height: Math.min(14, bottom - top) });
-  for (let row = 0; row < radius; row++) {
-    const dy = row + 0.5;
-    const inset = Math.floor(radius - Math.sqrt(radius * radius - dy * dy));
-    shape.push({ x: left + inset, y: bottom - radius + row, width: right - left - inset * 2, height: 1 });
+  // 노치 위쪽의 오목한 필렛(펼침 12px)이 잘리지 않도록 여유를 두고 포함한다.
+  if (left > 0) shape.push({ x: Math.max(0, left - 18), y: top, width: Math.min(18, left), height: Math.min(18, bottom - top) });
+  if (right < windowWidth) shape.push({ x: right, y: top, width: Math.min(18, windowWidth - right), height: Math.min(18, bottom - top) });
+  // 아래 모서리는 반 DIP 단위로 잘라 계단을 줄인다. 1px 단위로 자르면 150% 배율에서 톱니가 보인다.
+  const step = 0.5;
+  for (let row = 0; row < radius / step; row++) {
+    const dy = (row + 0.5) * step;
+    if (dy > radius) break;
+    const inset = radius - Math.sqrt(Math.max(0, radius * radius - dy * dy));
+    shape.push({ x: left + inset, y: bottom - radius + row * step, width: right - left - inset * 2, height: step });
   }
   win.setShape(shape.filter((rect) => rect.width > 0 && rect.height > 0));
 });

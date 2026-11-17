@@ -106,12 +106,12 @@ body,
 
 .notch-body::before {
   right: 100%;
-  background: radial-gradient(circle at 0 100%, transparent 7.5px, #0f140a 8px);
+  background: radial-gradient(circle at 0 100%, transparent calc(var(--notch-fillet) - 0.5px), #0f140a var(--notch-fillet));
 }
 
 .notch-body::after {
   left: 100%;
-  background: radial-gradient(circle at 100% 100%, transparent 7.5px, #0f140a 8px);
+  background: radial-gradient(circle at 100% 100%, transparent calc(var(--notch-fillet) - 0.5px), #0f140a var(--notch-fillet));
 }
 
 /* 접힌 상태: 배경은 순흑으로 두고 미디어 정보만 한 줄로 보여준다. */
@@ -120,10 +120,10 @@ body,
   box-shadow: none;
 }
 .notch.is-collapsed .notch-body::before {
-  background: radial-gradient(circle at 0 100%, transparent 7.5px, var(--notch-bg) 8px);
+  background: radial-gradient(circle at 0 100%, transparent calc(var(--notch-fillet) - 0.5px), var(--notch-bg) var(--notch-fillet));
 }
 .notch.is-collapsed .notch-body::after {
-  background: radial-gradient(circle at 100% 100%, transparent 7.5px, var(--notch-bg) 8px);
+  background: radial-gradient(circle at 100% 100%, transparent calc(var(--notch-fillet) - 0.5px), var(--notch-bg) var(--notch-fillet));
 }
 
 /* 생동감 있는 눈 */
