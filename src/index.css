@@ -423,6 +423,59 @@ body,
   padding-right: 40px;
 }
 
+/* 점판 시계: 시·분의 각 자리를 3×3 점 한 장으로 보여 주고, 1~6은 주사위 눈처럼 읽힌다. */
+.notch-dotclock {
+  --dot-clock-dot: 3px;
+  --dot-clock-gap: 2px;
+  --dot-clock-face-gap: 4px;
+  display: flex;
+  align-items: center;
+  gap: var(--dot-clock-face-gap);
+}
+
+.notch-dotclock-face {
+  display: grid;
+  grid-template-columns: repeat(3, var(--dot-clock-dot));
+  grid-template-rows: repeat(3, var(--dot-clock-dot));
+  gap: var(--dot-clock-gap);
+}
+
+.notch-dotclock-face i,
+.notch-dotclock-sep i {
+  width: var(--dot-clock-dot);
+  height: var(--dot-clock-dot);
+  border-radius: 50%;
+  background: rgba(244, 244, 246, 0.1);
+}
+
+.notch-dotclock-face i.is-on {
+  background: var(--notch-text);
+}
+
+.notch-dotclock-sep {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dot-clock-dot);
+}
+
+.notch-dotclock-sep i {
+  background: rgba(244, 244, 246, 0.38);
+}
+
+/* 점판은 접힌 유휴 노치에서만 본문 가운데에 선다. 배지가 있으면 그만큼 왼쪽으로 비켜 준다. */
+.notch.is-collapsed .notch-dotclock {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.notch.is-collapsed.has-status .notch-dotclock {
+  left: calc(50% - 20px);
+}
+
 /* 음성 상태는 라벨 없이 이모지 하나로만 보여 주고, 색은 포인트 컬러를 쓴다. */
 .notch.is-collapsed.has-voice {
   padding-right: 52px;

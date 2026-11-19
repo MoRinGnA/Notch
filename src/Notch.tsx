@@ -13,6 +13,7 @@ import { DiscordLink, MicStatus, VoiceNow, VoicePanel } from "./VoiceControls";
 import { BatteryLow, Music, Settings2, Volume2, Zap } from "lucide-react";
 import { useAccent } from "./useAccent";
 import { HudPanel } from "./HudPanel";
+import { DotClock } from "./DotClock";
 import { MediaPanel } from "./MediaPanel";
 
 interface NotchProps {
@@ -443,10 +444,12 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
     return () => window.clearTimeout(id);
   }, [deviceNote]);
 
+  // 접힌 유휴 노치의 점판 시계와 펼친 HUD가 같은 시각을 쓰도록 미디어가 없을 때는 항상 돈다.
   useEffect(() => {
-    if (!expanded || hasMedia) return;
+    if (hasMedia) return;
     const id = window.setInterval(() => setHudNow(Date.now()), 1000);
-    return () => window.clearInterval(id);  }, [expanded, hasMedia]);
+    return () => window.clearInterval(id);
+  }, [hasMedia]);
 
   useEffect(() => {
     if (!expanded || hasMedia || !window.notchApi) return;
@@ -759,6 +762,9 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
           </span>
           <span className="notch-eq" aria-hidden="true"><i /><i /><i /></span>
         </span>
+      )}
+      {!expanded && view === "hud" && !showMic && (
+        <DotClock hours={hudDate.getHours()} minutes={hudDate.getMinutes()} />
       )}
       {showMic && voice && (
         <>
