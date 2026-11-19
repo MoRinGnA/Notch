@@ -423,9 +423,10 @@ body,
   padding-right: 40px;
 }
 
-/* 점판 시계: 시·분의 각 자리를 3×3 점 한 장으로 보여 주고, 1~6은 주사위 눈처럼 읽힌다. */
+/* 점판 시계: 시·분의 각 자리를 3×3 점 한 장으로 보여 주고, 1~6은 주사위 눈처럼 읽힌다.
+   점 크기는 어느 칸이든 같게 두고, 정수 픽셀에 맞춰 흐릿하게 갈라지지 않게 한다. */
 .notch-dotclock {
-  --dot-clock-dot: 3px;
+  --dot-clock-dot: 4px;
   --dot-clock-gap: 2px;
   --dot-clock-face-gap: 4px;
   display: flex;
@@ -440,6 +441,7 @@ body,
   gap: var(--dot-clock-gap);
 }
 
+/* 아홉 칸을 옅은 점으로 늘 깔고, 켜진 칸만 밝게 채운다. */
 .notch-dotclock-face i,
 .notch-dotclock-sep i {
   width: var(--dot-clock-dot);
@@ -473,7 +475,7 @@ body,
 }
 
 .notch.is-collapsed.has-status .notch-dotclock {
-  left: calc(50% - 20px);
+  left: calc(50% - 27px);
 }
 
 /* 음성 상태는 라벨 없이 이모지 하나로만 보여 주고, 색은 포인트 컬러를 쓴다. */
