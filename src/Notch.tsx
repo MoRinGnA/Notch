@@ -10,7 +10,7 @@ import { fetchLyrics, lyricPolicy, type Lyrics } from "./lyrics";
 import { cleanTitle, trackName, artistName, displayArtist } from "./mediaText";
 import { SoundMixer } from "./AudioControls";
 import { DiscordLink, MicStatus, VoiceNow, VoicePanel } from "./VoiceControls";
-import { BatteryLow, Music, Settings2, Volume2, Zap } from "lucide-react";
+import { Music, Settings2, Volume2 } from "lucide-react";
 import { useAccent } from "./useAccent";
 import { HudPanel } from "./HudPanel";
 import { DotClock } from "./DotClock";
@@ -34,7 +34,6 @@ interface PendingPlay {
 }
 
 const MEDIA_POLL_MS = 2000;
-const BATTERY_POLL_MS = 30000;
 // 펼친 화면의 기본 폭(HUD 또는 미디어 패널).
 const EXPANDED_WIDTH = 600;
 // HUD는 네 줄짜리 판독 화면이라 미디어 패널보다 좁게 잡아 빈 자리를 남기지 않는다.
@@ -146,7 +145,6 @@ export function Notch({ expanded: expandedRequest, onToggle, onExpand: openExpan
   const expanded = expandedRequest && ((media.active && media.title.length > 0) || !!voice?.inChannel || linkOpen);
   const [lyrics, setLyrics] = useState<Lyrics>({ state: "idle", text: "", synced: [] });
   const [now, setNow] = useState(() => Date.now());
-  const [battery, setBattery] = useState<NotchBattery | null>(null);
   // 가사가 없을 때 채울 유튜브 썸네일(data URL). 없으면 빈 문자열.
   const [ytThumb, setYtThumb] = useState("");
   const mediaRef = useRef(media);
@@ -205,38 +203,6 @@ export function Notch({ expanded: expandedRequest, onToggle, onExpand: openExpan
       cancelled = true;
       mediaRequestRef.current++;
       window.clearTimeout(timer);
-    };
-  }, []);
-
-  // 전원 전환은 즉시 반영하고, 잔량은 이벤트 직후와 주기적으로 다시 읽는다.
-  useEffect(() => {
-    if (!window.notchApi) return;
-    let cancelled = false;
-    let request = 0;
-    const read = () => {
-      const current = ++request;
-      void window.notchApi!
-        .getBattery()
-        .then((b) => {
-          if (!cancelled && current === request) setBattery(b);
-        })
-        .catch((error: unknown) => {
-          // 일시적 조회 실패 시 마지막으로 확인한 상태를 유지한다.
-          if (!cancelled && current === request) console.warn("배터리 조회 실패:", error);
-        });
-    };
-    const unsubscribe = window.notchApi.onPowerChange((onBattery) => {
-      setBattery((previous) =>
-        previous?.hasBattery ? { ...previous, charging: !onBattery } : previous,
-      );
-      read();
-    });
-    read();
-    const id = window.setInterval(read, BATTERY_POLL_MS);
-    return () => {
-      cancelled = true;
-      unsubscribe();
-      window.clearInterval(id);
     };
   }, []);
 
@@ -469,15 +435,7 @@ export function Notch({ expanded: expandedRequest, onToggle, onExpand: openExpan
       window.clearInterval(id);
     };  }, [expanded, hasMedia]);
 
-  // 배터리는 평소에 숨기고, 충전 중이거나 30% 이하일 때만 글자로 알린다.
-  const lowBattery = !!battery?.hasBattery && !battery.charging && battery.percent <= 30;
-  const collapsedBadge = battery?.hasBattery && battery.charging
-    ? "bolt"
-    : lowBattery
-      ? "LOW"
-      : deviceNote
-        ? "OUT"
-        : "";
+  const collapsedBadge = deviceNote ? "OUT" : "";
   // 미디어 패널에서는 중복되는 NOTCH 문구를 숨기고 전원 상태만 표시한다.
   // 음성 채널에 있을 때는 오른쪽 자리를 마이크 표시에 내준다.
   const voiceActive = !!voice?.inChannel;
@@ -726,9 +684,8 @@ export function Notch({ expanded: expandedRequest, onToggle, onExpand: openExpan
           <MicStatus voice={voice} onToggle={toggleVoice} />
         </>
       )}
-      {collapsedBadge && <span className={`notch-status${lowBattery ? " is-low" : ""}${collapsedBadge === "bolt" ? " is-charging" : ""}`}>
-        {collapsedBadge === "bolt" ? <Zap aria-label="충전 중" /> : lowBattery ? <BatteryLow aria-label="배터리 부족" /> : <Volume2 aria-label="출력 장치 변경" />}
-        {battery?.hasBattery && (battery.charging || lowBattery) ? `${battery.percent}%` : null}
+      {collapsedBadge && <span className="notch-status">
+        <Volume2 aria-label="출력 장치 변경" />
       </span>}
       {/* 접힌 동안 패널 안의 버튼이 탭으로 잡히지 않게 inert를 준다. */}
       <div className="notch-panel" inert={!expanded}>
