@@ -131,13 +131,19 @@ function mediaAppName(app: string): string {
   return (MEDIA_APP_NAMES[key] ?? base).slice(0, 18);
 }
 
-export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, onHoverEnd }: NotchProps) {
+export function Notch({ expanded: expandedRequest, onToggle, onExpand: openExpand, onHoverStart, onHoverEnd }: NotchProps) {
   const notchRef = useRef<HTMLDivElement>(null);
   // 펼친 화면도 같은 가사 줄이 한 줄에 들어오도록 넓힌다.
   const lineMeasureRef = useRef<HTMLSpanElement>(null);
   const [expandedWidth, setExpandedWidth] = useState<number | null>(null);
 
   const [media, setMedia] = useState<NotchMedia>(EMPTY_MEDIA);
+  // Discord 음성 상태. 음성 채널에 들어가 있을 때만 접힌 노치 오른쪽에 표시한다.
+  const [voice, setVoice] = useState<NotchVoice | null>(null);
+  // 펼침은 미디어 재생 중이거나 Discord 음성 채널에 있을 때만 허용한다.
+  // 트레이에서 연 연결 화면. 열려 있는 동안은 펼침을 허용한다.
+  const [linkOpen, setLinkOpen] = useState(false);
+  const expanded = expandedRequest && ((media.active && media.title.length > 0) || !!voice?.inChannel || linkOpen);
   const [lyrics, setLyrics] = useState<Lyrics>({ state: "idle", text: "", synced: [] });
   const [now, setNow] = useState(() => Date.now());
   const [battery, setBattery] = useState<NotchBattery | null>(null);
@@ -371,8 +377,6 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
 
   // 미디어가 없을 때 펼친 화면은 HUD만 보여준다. 시계와 온도는 그때만 돈다.
   const [hudNow, setHudNow] = useState(() => Date.now());
-  const [temp, setTemp] = useState<{ value: number; source: "cpu" | "acpi" } | null>(null);
-  const [gpu, setGpu] = useState<number | null>(null);
   const [weather, setWeather] = useState<{ tempC: number; kind: string; city: string } | null>(null);
   // 앱별 볼륨 화면. 펼친 패널 내용만 바꾸고, 접으면 닫힌다.
   const [mixOpen, setMixOpen] = useState(false);
@@ -381,8 +385,6 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
   const linkRef = useRef<HTMLDivElement>(null);
   // 디스코드 전용 화면.
   const [voiceOpen, setVoiceOpen] = useState(false);
-  // 트레이에서 연 연결 화면.
-  const [linkOpen, setLinkOpen] = useState(false);
   // 세 화면은 같은 자리를 쓰므로 하나를 열면 나머지는 닫는다.
   const openMix = () => {
     setVoiceOpen(false);
@@ -410,9 +412,6 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
       setLinkOpen(true);
     });
   }, [openExpand]);
-
-  // Discord 음성 상태. 음성 채널에 들어가 있을 때만 접힌 노치 오른쪽에 표시한다.
-  const [voice, setVoice] = useState<NotchVoice | null>(null);
 
   useEffect(() => {
     const api = window.notchApi;
@@ -450,46 +449,6 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
     const id = window.setInterval(() => setHudNow(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, [hasMedia]);
-
-  useEffect(() => {
-    if (!expanded || hasMedia || !window.notchApi) return;
-    let cancelled = false;
-    const read = () => {
-      void window.notchApi!
-        .getTemp()
-        .then((value) => {
-          if (cancelled) return;
-          setTemp(value);
-        })
-        .catch(() => undefined);
-    };
-    void read();
-    const id = window.setInterval(read, 5000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };  }, [expanded, hasMedia]);
-
-  // HUD에서 GPU 사용률을 읽고, 이전 조회가 끝난 뒤 다음 조회를 예약한다.
-  useEffect(() => {
-    if (!expanded || hasMedia || !window.notchApi) return;
-    let cancelled = false;
-    let timer: number | undefined;
-    const read = async () => {
-      try {
-        const value = await window.notchApi!.getGpu();
-        if (!cancelled) setGpu(value);
-      } catch {
-        if (!cancelled) setGpu(null);
-      }
-      if (!cancelled) timer = window.setTimeout(read, 3000);
-    };
-    void read();
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [expanded, hasMedia]);
 
   // 날씨는 미디어가 없는 HUD에서만, 10분 간격으로 읽는다.
   useEffect(() => {
@@ -530,11 +489,6 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
   const hudHm = `${pad2(hudDate.getHours())}:${pad2(hudDate.getMinutes())}`;
   const hudSec = pad2(hudDate.getSeconds());
   const hudDay = `${hudDate.getFullYear()}.${pad2(hudDate.getMonth() + 1)}.${pad2(hudDate.getDate())} ${hudDate.toLocaleDateString("ko-KR", { weekday: "short" })}`;
-  const hudTemp = temp === null ? "–" : String(Math.round(temp.value));
-  // ACPI 열 구역까지 내려간 값은 CPU 다이 온도가 아니므로 라벨을 바꾼다. 앞자리를 4칸으로 맞춰 숫자 열은 그대로.
-  const hudTempLabel = temp?.source === "acpi" ? "ACPI" : "CPU";
-  const hudGpu = gpu === null ? "–" : String(Math.round(gpu));
-  const tempHot = temp !== null && temp.value >= 85;
   // 제목과 같은 앨범은 중복이라 메타 줄에서 뺀다.
   const metaAlbum =
     media.album && media.album !== media.title && media.album !== shownTitle ? media.album : "";
@@ -802,7 +756,7 @@ export function Notch({ expanded, onToggle, onExpand: openExpand, onHoverStart, 
           ) : displayScreen === "mix" ? (
             <SoundMixer active={expanded} onClose={() => setMixOpen(false)} onRowCount={setMixRowCount} />
           ) : displayScreen === "hud" ? (
-          <HudPanel hudHm={hudHm} hudSec={hudSec} hudDay={hudDay} weather={weather} tempHot={tempHot} hudTempLabel={hudTempLabel} hudTemp={hudTemp} hudGpu={hudGpu} expanded={expanded} openMix={openMix} voiceActive={voiceActive} voice={voice} openVoice={openVoice} toggleVoice={toggleVoice} />
+          <HudPanel hudHm={hudHm} hudSec={hudSec} hudDay={hudDay} weather={weather} expanded={expanded} openMix={openMix} voiceActive={voiceActive} voice={voice} openVoice={openVoice} toggleVoice={toggleVoice} />
         ) : (
           <MediaPanel shownTitle={shownTitle} hasMedia={hasMedia} media={media} metaAlbum={metaAlbum} livePosition={livePosition} progress={progress} timeKnown={timeKnown} sourceChips={sourceChips} playPending={playPending} selectSource={selectSource} hasSynced={hasSynced} activeLine={activeLine} lyrics={lyrics} shinePosition={shinePosition} showArt={showArt} ytThumb={ytThumb} lyricsText={lyricsText} lineMeasureRef={lineMeasureRef} widestLyric={widestLyric} voiceActive={voiceActive} voice={voice} openVoice={openVoice} toggleVoice={toggleVoice} control={control} expanded={expanded} openMix={openMix} />
         )}

@@ -905,10 +905,14 @@ function updateTrayMenu(): void {
 
 // 노치 창은 클릭해도 앞 창이 가려지지 않도록 포커스를 받지 않게 만들어져 있다.
 // 그런데 연결 화면은 시크릿을 키보드로 입력해야 하므로, 그 화면이 떠 있는 동안만 포커스를 허용한다.
+// 트레이 메뉴가 닫히며 생기는 blur로 연결 화면이 바로 닫히지 않도록 열린 시각을 기록한다.
+let discordLinkOpenedAt = 0;
+
 function openDiscordLink(): void {
   const win = notchWindow;
   if (!win || win.isDestroyed()) return;
   if (!win.isVisible()) win.showInactive();
+  discordLinkOpenedAt = Date.now();
   win.setFocusable(true);
   win.focus();
   win.webContents.send("notch:discord-link");
@@ -1168,7 +1172,10 @@ function createWindow(): void {
 
   win.setAlwaysOnTop(true, "screen-saver");
   // 연결 화면을 닫지 않고 다른 창을 눌렀을 때도 원래의 비활성 창으로 돌아간다.
-  win.on("blur", () => closeDiscordLink());
+  win.on("blur", () => {
+    if (Date.now() - discordLinkOpenedAt < 800) return;
+    closeDiscordLink();
+  });
   notchWindow = win;
   win.on("closed", () => {
     if (fullscreenTimer) clearInterval(fullscreenTimer);
